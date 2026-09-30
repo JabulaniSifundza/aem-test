@@ -1,0 +1,153 @@
+/* CME Group design language — base layer.
+   Requires tokens/tokens.css. Font files (Averta, Roboto Mono, CMEGroup-Icons) are licensed and are NOT bundled:
+   load them from the company's font host before this file (see README "Fonts").
+   Everything here uses tokens; no raw colours. */
+
+/* ---------- Reset & document ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--color-surface-page);
+  color: var(--color-text-body);
+  font-family: var(--type-body-family);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  letter-spacing: var(--type-body-tracking);
+  -webkit-font-smoothing: antialiased;
+}
+img, svg, video { display: block; max-width: 100%; height: auto; }
+a { color: var(--ctx-link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: var(--border-medium) solid var(--color-action-focus-ring); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+/* ---------- Colour context (light default / inverse) ----------
+   Components read --ctx-* so they adapt automatically inside dark surfaces.
+   Any element with a dark background MUST carry .cme-inverse (the site's ".reverse"). */
+:root, .cme-light {
+  --ctx-heading: var(--color-text-heading);
+  --ctx-body: var(--color-text-body);
+  --ctx-muted: var(--color-text-body);
+  --ctx-link: var(--color-text-link);
+  --ctx-eyebrow: var(--color-text-eyebrow);
+  --ctx-border: var(--color-border-subtle);
+  --ctx-rule: var(--color-border-strong);
+  --ctx-gain: var(--color-data-gain);
+  --ctx-loss: var(--color-data-loss);
+}
+.cme-light { color: var(--ctx-body); }
+.cme-inverse {
+  --ctx-heading: var(--color-text-inverse);
+  --ctx-body: var(--color-text-inverse);
+  --ctx-muted: var(--color-text-inverse-muted);
+  --ctx-link: var(--color-text-inverse-link);
+  --ctx-eyebrow: var(--color-text-inverse-eyebrow);
+  --ctx-border: var(--color-border-inverse);
+  --ctx-rule: var(--navy2);
+  --ctx-gain: var(--color-data-gain-inverse);
+  --ctx-loss: var(--color-data-loss-inverse);
+  color: var(--ctx-body);
+}
+
+/* ---------- Typography ---------- */
+h1, h2, h3, h4, h5, h6, p { margin-top: 0; }
+h1, .cme-h1 { font: var(--type-h1-weight) var(--type-h1-size)/var(--type-h1-line) var(--type-h1-family); letter-spacing: var(--type-h1-tracking); color: var(--ctx-heading); margin-bottom: var(--space-s); }
+h2, .cme-h2 { font: var(--type-h2-weight) var(--type-h2-size)/var(--type-h2-line) var(--type-h2-family); letter-spacing: var(--type-h2-tracking); color: var(--ctx-heading); margin-bottom: var(--space-s); }
+h3, .cme-h3 { font: var(--type-h3-weight) var(--type-h3-size)/var(--type-h3-line) var(--type-h3-family); letter-spacing: var(--type-h3-tracking); color: var(--ctx-heading); margin-bottom: var(--space-s); }
+h4, .cme-h4 { font: var(--type-h4-weight) var(--type-h4-size)/var(--type-h4-line) var(--type-h4-family); letter-spacing: var(--type-h4-tracking); color: var(--ctx-heading); margin-bottom: var(--space-s); }
+h5, .cme-eyebrow { font: var(--type-eyebrow-weight) var(--type-eyebrow-size)/var(--type-eyebrow-line) var(--type-eyebrow-family); letter-spacing: var(--type-eyebrow-tracking); text-transform: uppercase; color: var(--ctx-eyebrow); margin-bottom: var(--space-s); }
+h6, .cme-overline { font: var(--type-overline-weight) var(--type-overline-size)/var(--type-overline-line) var(--type-overline-family); letter-spacing: var(--type-overline-tracking); text-transform: uppercase; color: var(--ctx-heading); margin-bottom: 15px; }
+@media (min-width: 769px) { h1, .cme-h1 { margin-bottom: var(--space-m); } }
+@media (max-width: 768.98px) { h6, .cme-overline { margin-bottom: var(--space-xs); } }
+
+.cme-display-xl { font: var(--type-display-xl-weight) var(--type-display-xl-size)/var(--type-display-xl-line) var(--type-display-xl-family); letter-spacing: var(--type-display-xl-tracking); color: var(--ctx-heading); margin: 0 0 var(--space-m); }
+.cme-display    { font: var(--type-display-weight) var(--type-display-size)/var(--type-display-line) var(--type-display-family); letter-spacing: var(--type-display-tracking); color: var(--ctx-heading); margin: 0 0 var(--space-m); }
+@media (max-width: 992.98px) {
+  .cme-display-xl { font-size: var(--type-h1-size); line-height: var(--type-h1-line); font-weight: var(--weight-light); }
+  .cme-display    { font-size: var(--type-h1-size); line-height: var(--type-h1-line); }
+}
+
+p, .cme-body { font: var(--type-body-weight) var(--type-body-size)/var(--type-body-line) var(--type-body-family); letter-spacing: var(--type-body-tracking); color: var(--ctx-body); margin-bottom: var(--space-m); }
+.cme-text-xl { font: var(--type-text-xl-weight) var(--type-text-xl-size)/var(--type-text-xl-line) var(--type-text-xl-family); letter-spacing: var(--type-text-xl-tracking); color: var(--ctx-body); margin-bottom: var(--space-s); }
+.cme-lead    { font: var(--type-lead-weight) var(--type-lead-size)/var(--type-lead-line) var(--type-lead-family); letter-spacing: var(--type-lead-tracking); color: var(--ctx-body); margin-bottom: var(--space-m); }
+.cme-small   { font: var(--type-small-weight) var(--type-small-size)/var(--type-small-line) var(--type-small-family); letter-spacing: var(--type-small-tracking); color: var(--ctx-body); margin-bottom: var(--space-s); }
+.cme-fine    { font: var(--type-fine-weight) var(--type-fine-size)/var(--type-fine-line) var(--type-fine-family); letter-spacing: var(--type-fine-tracking); color: var(--ctx-muted); margin-bottom: var(--space-xs); }
+.cme-meta    { font: var(--type-meta-weight) var(--type-meta-size)/var(--type-meta-line) var(--type-meta-family); letter-spacing: var(--type-meta-tracking); text-transform: uppercase; color: var(--ctx-muted); }
+.cme-label   { font: var(--type-label-weight) var(--type-label-size)/var(--type-label-line) var(--type-label-family); letter-spacing: var(--type-label-tracking); text-transform: uppercase; color: var(--ctx-muted); }
+.cme-data-sm { font: var(--type-data-sm-weight) var(--type-data-sm-size)/var(--type-data-sm-line) var(--type-data-sm-family); }
+.cme-data-md { font: var(--type-data-md-weight) var(--type-data-md-size)/var(--type-data-md-line) var(--type-data-md-family); }
+.cme-data-lg { font: var(--type-data-lg-weight) var(--type-data-lg-size)/var(--type-data-lg-line) var(--type-data-lg-family); letter-spacing: var(--type-data-lg-tracking); }
+.cme-data-xl { font: var(--type-data-xl-weight) var(--type-data-xl-size)/var(--type-data-xl-line) var(--type-data-xl-family); }
+.cme-gain { color: var(--ctx-gain); }
+.cme-loss { color: var(--ctx-loss); }
+.cme-highlight { color: var(--color-data-highlight); }   /* green emphasis inside promo/lead copy on dark only */
+.cme-accent-text { color: var(--color-text-inverse-eyebrow); } /* citron, dark surfaces only */
+ul.cme-list-plain { list-style: none; margin: 0; padding: 0; }
+
+/* ---------- Layout: section → container → row → col ---------- */
+.cme-section { position: relative; padding-block: var(--space-m); background: var(--color-surface-page); }
+@media (min-width: 769px) { .cme-section { padding-block: var(--space-l); } }
+.cme-section--tight { padding-block: var(--space-s); }
+@media (min-width: 769px) { .cme-section--tight { padding-block: var(--space-m); } }
+.cme-section--flush { padding-block: 0; }
+.cme-section--subtle   { background: var(--color-surface-subtle); }
+.cme-section--inverse  { background: var(--color-surface-inverse); }
+.cme-section--deep     { background: var(--color-surface-inverse-deep); }
+.cme-section--indigo   { background: var(--color-surface-inverse-indigo); }
+.cme-section--deepest  { background: var(--color-surface-inverse-deepest); }
+.cme-section--accent   { background: var(--color-surface-accent); }
+/* Photo background. Always combine with an inverse surface + .cme-inverse. Set the image with style="--cme-bg-image:url(...)" */
+.cme-section--image { background-image: var(--cme-bg-image); background-size: cover; background-position: center; }
+.cme-section--image::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 150px; background: linear-gradient(color-mix(in srgb, var(--gray1) 40%, transparent) 0, color-mix(in srgb, var(--gray1) 30%, transparent) 50%, transparent); pointer-events: none; }
+.cme-section--image > .cme-container { position: relative; z-index: 1; }
+
+.cme-container { width: 100%; margin-inline: auto; padding-inline: var(--container-padding-xs); max-width: var(--container-max-xs); }
+@media (min-width: 481px)  { .cme-container { max-width: var(--container-max-sm);  padding-inline: var(--container-padding-sm); } }
+@media (min-width: 769px)  { .cme-container { max-width: var(--container-max-md);  padding-inline: var(--container-padding-md); } }
+@media (min-width: 993px)  { .cme-container { max-width: var(--container-max-lg);  padding-inline: var(--container-padding-lg); } }
+@media (min-width: 1201px) { .cme-container { max-width: var(--container-max-xl);  padding-inline: var(--container-padding-xl); } }
+@media (min-width: 1401px) { .cme-container { max-width: var(--container-max-xxl); padding-inline: var(--container-padding-xxl); } }
+
+.cme-row { --gutter: var(--grid-gutter); display: flex; flex-wrap: wrap; margin-inline: calc(var(--gutter) / -2); row-gap: var(--space-s); }
+.cme-row > * { flex: 0 0 100%; max-width: 100%; padding-inline: calc(var(--gutter) / 2); min-width: 0; }
+.cme-row > .cme-col { flex: 1 0 0; }
+.cme-row--align-end { align-items: flex-end; }
+.cme-row--align-center { align-items: center; }
+@media (min-width: 769px) {
+  .cme-row { row-gap: var(--space-m); }
+  .cme-row--wide { --gutter: var(--grid-gutter-wide); }
+  .cme-row--rule > *:not(:last-child) { border-right: var(--border-thin) solid var(--ctx-rule); }
+}
+.cme-col-12 { flex: 0 0 100%; max-width: 100%; }
+@media (min-width: 769px) {
+  .cme-col-md-3  { flex: 0 0 25%;        max-width: 25%; }
+  .cme-col-md-4  { flex: 0 0 33.3333%;   max-width: 33.3333%; }
+  .cme-col-md-5  { flex: 0 0 41.6667%;   max-width: 41.6667%; }
+  .cme-col-md-6  { flex: 0 0 50%;        max-width: 50%; }
+  .cme-col-md-7  { flex: 0 0 58.3333%;   max-width: 58.3333%; }
+  .cme-col-md-8  { flex: 0 0 66.6667%;   max-width: 66.6667%; }
+  .cme-col-md-9  { flex: 0 0 75%;        max-width: 75%; }
+  .cme-col-md-12 { flex: 0 0 100%;       max-width: 100%; }
+  .cme-col-md    { flex: 1 0 0;          max-width: 100%; }
+}
+@media (min-width: 993px) {
+  .cme-col-lg-3 { flex: 0 0 25%;      max-width: 25%; }
+  .cme-col-lg-4 { flex: 0 0 33.3333%; max-width: 33.3333%; }
+  .cme-col-lg-6 { flex: 0 0 50%;      max-width: 50%; }
+  .cme-col-lg-8 { flex: 0 0 66.6667%; max-width: 66.6667%; }
+  .cme-col-lg-9 { flex: 0 0 75%;      max-width: 75%; }
+}
+
+/* ---------- Spacing utilities (token steps only) ---------- */
+.cme-mt-0 { margin-top: 0 !important; }       .cme-mb-0 { margin-bottom: 0 !important; }
+.cme-mt-xs { margin-top: var(--space-xs) !important; } .cme-mb-xs { margin-bottom: var(--space-xs) !important; }
+.cme-mt-s  { margin-top: var(--space-s) !important; }  .cme-mb-s  { margin-bottom: var(--space-s) !important; }
+.cme-mt-m  { margin-top: var(--space-m) !important; }  .cme-mb-m  { margin-bottom: var(--space-m) !important; }
+.cme-mt-l  { margin-top: var(--space-l-r) !important; } .cme-mb-l { margin-bottom: var(--space-l-r) !important; }
+.cme-mt-xl { margin-top: var(--space-xl-r) !important; } .cme-mb-xl { margin-bottom: var(--space-xl-r) !important; }
+/* Pull a row of cards up over the preceding hero (site: crmt-neg-*). Only directly after a .cme-hero section. */
+.cme-pull-up { margin-top: -70px !important; position: relative; z-index: 2; }
+.cme-text-right-md { text-align: left; }
+@media (min-width: 769px) { .cme-text-right-md { text-align: right; } }
+.cme-visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
