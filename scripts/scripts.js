@@ -143,53 +143,66 @@ function decorateButtons(main) {
 }
 
 /**
- * Applies Section Metadata (Style, Id, Layout) to its section and removes the table.
+ * Applies Section Metadata (Style, Id, Layout) to its section and removes the table
+ * (or reads them from the section when the server has already applied them).
  * Styles map to the design language: subtle, inverse, deep, indigo, deepest, tight, flush.
  * @param {Element} main The container element
  */
 const DARK_SURFACES = ['inverse', 'deep', 'indigo', 'deepest'];
 const SECTION_STYLES = ['subtle', 'tight', 'flush', ...DARK_SURFACES];
+const SECTION_FLAGS = ['reading']; // layout flags, not surfaces
 
 function decorateSectionMetadata(main) {
   main.querySelectorAll(':scope > .section').forEach((section) => {
     section.classList.add('cme-section');
     const meta = section.querySelector(':scope > div > .section-metadata');
-    if (!meta) return;
-    const config = readBlockConfig(meta);
+    const config = meta ? readBlockConfig(meta) : {};
+    // Edge Delivery usually applies Section Metadata on the server: Style values arrive as
+    // classes on the section, Id as its id and other keys as data-* attributes.
     const styles = [].concat(config.style || []).join(',').split(',')
       .map((s) => toClassName(s.trim()))
+      .concat([...section.classList])
       .filter(Boolean);
     styles.forEach((style) => {
+      if (SECTION_FLAGS.includes(style)) section.dataset[style] = 'true';
       if (!SECTION_STYLES.includes(style)) return;
       section.classList.add(`cme-section--${style}`);
       if (DARK_SURFACES.includes(style)) section.classList.add('cme-inverse');
     });
     if (config.id) section.id = toClassName(config.id);
     if (config.layout) section.dataset.layout = String(config.layout).trim();
-    meta.parentElement.remove();
+    if (meta) meta.parentElement.remove();
   });
 }
 
 /**
- * Wraps each section in .cme-container. With Layout "a-b" (e.g. 9-3, 4-8, 6-6) the leading
- * default content stays full width, the last block goes in the second column and everything
- * else in the first. Runs after decorateBlocks so block loading is unaffected.
+ * Wraps each section in .cme-container and applies its Layout (layout.md grid):
+ * - "a-b" (e.g. 8-4, 4-8, 6-6, 3-9) with two or more blocks: leading default content stays
+ *   full width, the last block goes in the second column and everything else in the first.
+ * - "a-b" with one block: everything before the block goes in the first column, the block in
+ *   the second (intro split, FAQ 4/8, card rail 3/9).
+ * - Extra words add documented row modifiers: "wide", "rule", "center" (e.g. "8-4 wide rule").
+ * Section style "reading" puts the content in the reading column (reading.md).
+ * Runs after decorateBlocks so block loading is unaffected.
  * @param {Element} main The container element
  */
+const ROW_MODIFIERS = { wide: 'cme-row--wide', rule: 'cme-row--rule', center: 'cme-row--align-center' };
+
 function decorateSectionLayout(main) {
   main.querySelectorAll(':scope > .section').forEach((section) => {
     const wrappers = [...section.children];
     const container = document.createElement('div');
     container.className = 'cme-container';
-    const layout = (section.dataset.layout || '').match(/^(\d{1,2})\s*-\s*(\d{1,2})$/);
+    const words = (section.dataset.layout || '').toLowerCase().split(/\s+/).filter(Boolean);
+    const layout = (words[0] || '').match(/^(\d{1,2})-(\d{1,2})$/);
     const blockWrappers = wrappers.filter((w) => !w.classList.contains('default-content-wrapper'));
-    if (layout && blockWrappers.length >= 2) {
-      const firstBlock = wrappers.indexOf(blockWrappers[0]);
-      const head = wrappers.slice(0, firstBlock);
-      const rest = wrappers.slice(firstBlock);
+    if (layout && blockWrappers.length >= 1) {
       const last = blockWrappers[blockWrappers.length - 1];
+      const firstBlock = wrappers.indexOf(blockWrappers[0]);
+      const head = blockWrappers.length >= 2 ? wrappers.slice(0, firstBlock) : [];
+      const rest = wrappers.filter((w) => !head.includes(w));
       const row = document.createElement('div');
-      row.className = 'cme-row';
+      row.className = ['cme-row', ...words.slice(1).map((w) => ROW_MODIFIERS[w]).filter(Boolean)].join(' ');
       const [, a, b] = layout;
       const bp = [a, b].includes('9') ? 'lg' : 'md'; // 9-3 sidebars collapse below 993px
       const col1 = document.createElement('div');
@@ -199,10 +212,49 @@ function decorateSectionLayout(main) {
       rest.forEach((w) => (w === last ? col2 : col1).append(w));
       row.append(col1, col2);
       container.append(...head, row);
+    } else if (section.dataset.reading) {
+      const reading = document.createElement('div');
+      reading.className = 'cme-reading';
+      reading.append(...wrappers);
+      container.append(reading);
     } else {
       container.append(...wrappers);
     }
     section.append(container);
+  });
+}
+
+/**
+ * Maps authoring conventions in default content to design-language typography
+ * (typography.md, button.md):
+ * - a Heading 6 directly above a heading is that heading's eyebrow (p.cme-eyebrow);
+ * - a paragraph that is entirely italic (and not a link) is a lead paragraph (p.cme-lead);
+ * - a paragraph holding only a "View all …" link becomes the view-all link;
+ * - a paragraph that is entirely subscript is fine print (p.cme-fine, e.g. data timestamps).
+ * @param {Element} main The container element
+ */
+function decorateDefaultContent(main) {
+  main.querySelectorAll('.default-content-wrapper h6').forEach((h6) => {
+    const next = h6.nextElementSibling;
+    if (!next || !/^H[1-4]$/.test(next.tagName)) return;
+    const eyebrow = document.createElement('p');
+    eyebrow.className = 'cme-eyebrow';
+    eyebrow.textContent = h6.textContent.trim();
+    h6.replaceWith(eyebrow);
+  });
+  main.querySelectorAll('.default-content-wrapper > p').forEach((p) => {
+    const only = p.children.length === 1 ? p.firstElementChild : null;
+    if (!only || p.textContent.trim() !== only.textContent.trim()) return;
+    if (only.tagName === 'EM' && !only.querySelector('a')) {
+      p.className = 'cme-lead';
+      p.replaceChildren(...only.childNodes);
+    } else if (only.tagName === 'SUB') {
+      p.className = 'cme-fine cme-mt-s';
+      p.replaceChildren(...only.childNodes);
+    } else if (only.tagName === 'A' && /^view all/i.test(only.textContent.trim())) {
+      only.className = 'cme-view-all';
+      p.replaceWith(only);
+    }
   });
 }
 
@@ -213,6 +265,7 @@ export function decorateMain(main) {
   decorateSections(main);
   decorateSectionMetadata(main);
   decorateBlocks(main);
+  decorateDefaultContent(main);
   decorateButtons(main);
   decorateSectionLayout(main);
 }

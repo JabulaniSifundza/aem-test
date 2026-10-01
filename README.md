@@ -2,8 +2,8 @@
 Your project's description...
 
 ## Environments
-- Preview: https://main--aem_test--JabulaniSifundza.aem.page/
-- Live: https://main--aem_test--JabulaniSifundza.aem.live/
+- Preview: https://main--aem-test--jabulanisifundza.aem.page/
+- Live: https://main--aem-test--jabulanisifundza.aem.live/
 
 ## Documentation
 

@@ -85,3 +85,82 @@ export function cmeLink(a, cls = 'cme-link') {
   const label = el('span', { class: 'cme-link__text' }, text(a));
   return el('a', { class: cls, href: a.getAttribute('href') }, label);
 }
+
+let menuCounter = 0;
+
+/**
+ * "Explore" link menu for hero navigation (hero.md): a link-styled dropdown trigger and a
+ * menu of the links in the cell. Open/close and keyboard come from scripts/cme.js.
+ * @param {string} label Trigger text, e.g. "Explore JB Future Index"
+ * @param {HTMLAnchorElement[]} links Menu items
+ * @returns {HTMLElement|null}
+ */
+export function exploreMenu(label, links) {
+  if (!links.length) return null;
+  menuCounter += 1;
+  const id = `explore-menu-${menuCounter}`;
+  const menu = el('div', { class: 'cme-dropdown__menu', id }, links.map((a) => el('a', { class: 'cme-dropdown__item', href: a.getAttribute('href') }, text(a))));
+  menu.hidden = true;
+  return el(
+    'div',
+    { class: 'cme-dropdown' },
+    el(
+      'button',
+      {
+        class: 'cme-link', type: 'button', 'aria-haspopup': 'true', 'aria-expanded': 'false', 'aria-controls': id,
+      },
+      el('span', { class: 'cme-link__text' }, label),
+      icon('chevron-down'),
+    ),
+    menu,
+  );
+}
+
+/**
+ * Key/value rows of a block ("Title | JB Future Index"), keys lower-cased.
+ * Repeated keys keep the first value; rows without a value cell are skipped.
+ * @param {Element} block
+ * @returns {Map<string, Element>} key -> value cell
+ */
+export function keyedRows(block) {
+  const map = new Map();
+  rows(block).forEach(([key, value]) => {
+    const k = text(key).toLowerCase();
+    if (k && value && !map.has(k)) map.set(k, value);
+  });
+  return map;
+}
+
+/**
+ * Buttons from authored links: the first bold link becomes the primary button (one per
+ * section, button.md); the others use the given secondary style.
+ * @param {Element} cell Cell holding the links
+ * @param {string} [secondary] Secondary button modifier
+ * @returns {HTMLAnchorElement[]}
+ */
+export function buttonsFrom(cell, secondary = 'cme-btn--secondary') {
+  let primaryUsed = false;
+  return [...(cell?.querySelectorAll('a') || [])].map((a) => {
+    const bold = !!a.closest('strong, b') || a.classList.contains('cme-btn--primary');
+    const primary = bold && !primaryUsed;
+    primaryUsed = primaryUsed || primary;
+    return el('a', { class: `cme-btn ${primary ? 'cme-btn--primary' : secondary}`, href: a.getAttribute('href') }, text(a));
+  });
+}
+
+/**
+ * Bars (notice, jump nav) span the page and bring their own container. When the block is the
+ * only content of its section, the section's container is replaced by the bar and the section
+ * loses its padding; otherwise the bar stays where it is.
+ * @param {Element} block The block element
+ * @param {Element} bar The full-width bar it rendered
+ */
+export function fullWidth(block, bar) {
+  const section = block.closest('.section');
+  if (!section) return;
+  const others = [...section.querySelectorAll('.block')].filter((b) => b !== block);
+  const hasText = [...section.querySelectorAll('.default-content-wrapper')].some((w) => w.textContent.trim());
+  if (others.length || hasText) return;
+  section.classList.add('cme-section--flush');
+  section.replaceChildren(bar);
+}

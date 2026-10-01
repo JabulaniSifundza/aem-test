@@ -1,3 +1,2 @@
 helix-importer-ui
-*.min.js# vendored from the CME design-language package (copied unchanged)
-scripts/cme.js
+*.min.js

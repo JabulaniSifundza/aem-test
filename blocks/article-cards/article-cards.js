@@ -8,6 +8,8 @@ import { el, icon, text } from '../../scripts/cme-dom.js';
  * The card links to the row's link. The meta icon follows the meta text:
  * video/watch → play, podcast/listen → podcast, otherwise list (article).
  * 2 cards → 6/6, 3 → 4/4/4, 4 → 3/3/3/3. Keep all cards the same shape (all with images or none).
+ * Variants: (two-up) always 6/6 (a 2×2 grid, e.g. in a 3/9 card rail);
+ *           (outline) outline cards for dark bands: title + meta line, no image or excerpt.
  */
 function metaIcon(meta) {
   if (/video|watch/i.test(meta)) return 'play';
@@ -15,7 +17,25 @@ function metaIcon(meta) {
   return 'list';
 }
 
+function outlineCard(row) {
+  const link = row.querySelector('a');
+  const cells = [...row.children];
+  const title = text(cells[0]) || text(link);
+  const meta = cells.slice(1).map(text).filter(Boolean).join(' · ');
+  return el(
+    'a',
+    { class: 'cme-card--outline', href: link ? link.getAttribute('href') : '#' },
+    el('h3', { class: 'cme-card__title' }, title),
+    meta ? el('span', { class: 'cme-meta' }, meta) : null,
+  );
+}
+
 export default function decorate(block) {
+  if (block.classList.contains('outline')) {
+    const cards = [...block.children].map(outlineCard);
+    block.replaceChildren(el('div', { class: 'cme-row' }, cards.map((card) => el('div', { class: 'cme-col-md-6' }, card))));
+    return;
+  }
   const cards = [...block.children].map((row) => {
     const cells = [...row.children];
     const picture = row.querySelector('picture');
@@ -50,7 +70,7 @@ export default function decorate(block) {
     );
   });
 
-  const span = { 1: 12, 2: 6, 3: 4 }[cards.length] || 3;
+  const span = block.classList.contains('two-up') ? 6 : ({ 1: 12, 2: 6, 3: 4 }[cards.length] || 3);
   const grid = el('div', { class: 'cme-row' }, cards.map((card) => el('div', { class: `cme-col-md-${span}` }, card)));
   block.replaceChildren(grid);
 }

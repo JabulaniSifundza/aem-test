@@ -34,12 +34,13 @@ footer .footer[data-block-status="loaded"] { visibility: visible; }
 
 /* Sections: scripts.js adds .cme-section and wraps content in .cme-container */
 main > .section:not(.cme-section) { padding-block: var(--space-m); }
-main .default-content-wrapper > :last-child { margin-bottom: 0; }
-main .section .cme-container > * + * { margin-top: var(--space-m); }
-main .section .cme-row > * > * + * { margin-top: var(--space-m); }
 
-/* Default content lead paragraph: first paragraph after an h2 in a section */
-main .default-content-wrapper h2 + p { font: var(--type-lead-weight) var(--type-lead-size)/var(--type-lead-line) var(--type-lead-family); }
+/*
+ * Spacing inside sections comes from the design language's own element margins (base.css:
+ * headings, paragraphs, lists, cme-mt-* / cme-mb-*), exactly as on a plain HTML page.
+ * The EDS wrappers (default-content-wrapper, *-wrapper) add no spacing of their own, so a page
+ * authored in DA lays out like the same page written by hand.
+ */
 
 /* Page tabs: the whole section sticks under the header */
 main > .section.page-tabs-container {
@@ -52,6 +53,16 @@ main > .section.page-tabs-container {
 }
 
 @media (width >= 993px) { main > .section.page-tabs-container { top: var(--navbar-height); } }
+
+/* Jump nav: same sticky behaviour as page tabs (reading.md); the bar keeps its own look */
+main > .section.jump-nav-container {
+  position: sticky;
+  top: var(--navbar-height-mobile);
+  z-index: 50;
+  padding: 0;
+}
+
+@media (width >= 993px) { main > .section.jump-nav-container { top: var(--navbar-height); } }
 
 /* stylelint-disable-next-line selector-class-pattern -- design-language BEM class */
 main > .section.page-tabs-container .cme-tabs--page {
