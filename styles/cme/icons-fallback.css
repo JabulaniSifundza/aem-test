@@ -35,3 +35,64 @@
 .cme-icon--search { --cme-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='7' cy='7' r='5' fill='none' stroke='black' stroke-width='2'/%3E%3Cpath d='M11 11l4 4' stroke='black' stroke-width='2'/%3E%3C/svg%3E"); }
 .cme-icon--user { --cme-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='5' r='3.2'/%3E%3Cpath d='M1.5 15c.8-3.6 3.4-5.3 6.5-5.3s5.7 1.7 6.5 5.3z'/%3E%3C/svg%3E"); }
 .cme-icon--menu { --cme-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 3h14M1 8h14M1 13h14' stroke='black' stroke-width='2'/%3E%3C/svg%3E"); }
+
+/*
+ * Icons drawn from the CME icon SVGs (the kit's 24px versions of the same glyphs):
+ * plus / minus for accordions, check for checkboxes, menu-close, info-filled and
+ * attention-triangle for notices. Same mask technique as above.
+ */
+.cme-icon--plus::before,
+.cme-icon--minus::before,
+.cme-icon--check::before,
+.cme-icon--menu-close::before,
+.cme-icon--info-filled::before,
+.cme-icon--attention-triangle::before {
+  content: "";
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  background: currentcolor;
+  mask: var(--cme-icon-mask) center / contain no-repeat;
+}
+
+.cme-icon--plus { --cme-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M13.4287 10.5713H22V13.4287H13.4287V22H10.5713V13.4287H2V10.5713H10.5713V2H13.4287V10.5713Z'/%3E%3C/svg%3E"); }
+.cme-icon--minus { --cme-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M2 13.6667V10.3333H22V13.6667H2Z'/%3E%3C/svg%3E"); }
+.cme-icon--check { --cme-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M19.2636 4.5C16.227 7.5555 12.7329 11.0545 9.57544 14.2273L4.49497 9.88384L2 12.8434L8.43863 18.3384L9.7968 19.5L11.0543 18.2273C14.4852 14.7752 18.563 10.6958 22 7.23738L19.2636 4.5Z'/%3E%3C/svg%3E"); }
+.cme-icon--menu-close { --cme-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M22 4.22266L14.2227 12L22 19.7773L19.7773 22L12 14.2227L4.22266 22L2 19.7773L9.77734 12L2 4.22266L4.22266 2L12 9.77734L19.7773 2L22 4.22266Z'/%3E%3C/svg%3E"); }
+.cme-icon--info-filled { --cme-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' transform='translate%282.000 2.000%29 scale%281.0000%29' d='M10 0C4.48 0 0 4.48 0 10C0 15.52 4.48 20 10 20C15.52 20 20 15.52 20 10C20 4.48 15.52 0 10 0ZM10.7143 14.2857H9.28569V8.57142H10.7143V14.2857ZM10.7143 7.14284H9.28569V5.71426H10.7143V7.14284Z'/%3E%3C/svg%3E"); }
+.cme-icon--attention-triangle { --cme-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath transform='translate%282.075 2.724%29' d='M9.04494 0.525367C9.42265 -0.175139 10.4279 -0.175105 10.8057 0.525367L19.7295 17.0761C20.0888 17.7424 19.6066 18.5508 18.8496 18.5508H1.00099C0.244364 18.5505 -0.237902 17.7422 0.121109 17.0761L9.04494 0.525367ZM9.91115 13.8994C9.22823 13.8994 8.67873 14.4384 8.67873 15.0976C8.67873 15.7719 9.22822 16.3115 9.91115 16.3115C10.5644 16.3115 11.1133 15.7718 11.1133 15.0976C11.1133 14.4384 10.5644 13.8994 9.91115 13.8994ZM9.19826 12.6855H10.6533L10.9795 5.14939H8.85744L9.19826 12.6855Z'/%3E%3C/svg%3E"); }
+
+/* Accordion: + when closed, - when open (accordion.md); replaces the icon-font glyph */
+.cme-accordion__header::after {
+  content: "";
+  flex: none;
+  width: 16px;
+  height: 16px;
+  background: currentcolor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M13.4287 10.5713H22V13.4287H13.4287V22H10.5713V13.4287H2V10.5713H10.5713V2H13.4287V10.5713Z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.cme-accordion__header[aria-expanded="true"]::after {
+  content: "";
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M2 13.6667V10.3333H22V13.6667H2Z'/%3E%3C/svg%3E");
+}
+
+/* Checkbox: white tick on the checked box (forms.md) */
+.cme-checkbox input:checked::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  background: currentcolor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M19.2636 4.5C16.227 7.5555 12.7329 11.0545 9.57544 14.2273L4.49497 9.88384L2 12.8434L8.43863 18.3384L9.7968 19.5L11.0543 18.2273C14.4852 14.7752 18.563 10.6958 22 7.23738L19.2636 4.5Z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* Selects and dropdown triggers: chevron-down */
+.cme-select-wrap::after,
+.cme-dropdown__trigger::after {
+  content: "";
+  width: 12px;
+  height: 12px;
+  background: currentcolor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M3.78788 6.16668L2 7.93617L12 17.8333L22 7.93617L20.2121 6.16668L12 14.2944L3.78788 6.16668Z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
