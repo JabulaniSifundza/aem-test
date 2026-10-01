@@ -96,3 +96,20 @@
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M3.78788 6.16668L2 7.93617L12 17.8333L22 7.93617L20.2121 6.16668L12 14.2944L3.78788 6.16668Z'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
+/* FedWatch block: download, calendar and clock (simple stand-ins until the licensed font is loaded) */
+.cme-icon--download::before,
+.cme-icon--calendar-regular::before,
+.cme-icon--clock-regular::before,
+.cme-icon--bell::before {
+  content: "";
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  background: currentcolor;
+  mask: var(--cme-icon-mask) center / contain no-repeat;
+}
+
+.cme-icon--download { --cme-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1v9M4 6.5l4 4 4-4M2 14h12' fill='none' stroke='black' stroke-width='2'/%3E%3C/svg%3E"); }
+.cme-icon--calendar-regular { --cme-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 3.5h12v11H2zM2 7h12M5 1v4M11 1v4' fill='none' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E"); }
+.cme-icon--clock-regular { --cme-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6.5' fill='none' stroke='black' stroke-width='1.5'/%3E%3Cpath d='M8 4v4l3 2' fill='none' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E"); }
+.cme-icon--bell { --cme-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5a4.5 4.5 0 0 0-4.5 4.5v3.5L2 12h12l-1.5-2.5V6A4.5 4.5 0 0 0 8 1.5zM6 13.5a2 2 0 0 0 4 0z'/%3E%3C/svg%3E"); }
