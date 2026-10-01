@@ -35,7 +35,9 @@ footer .footer[data-block-status="loaded"] { visibility: visible; }
 /* Sections: scripts.js adds .cme-section and wraps content in .cme-container */
 main > .section:not(.cme-section) { padding-block: var(--space-m); }
 main .default-content-wrapper > :last-child { margin-bottom: 0; }
-main .section .cme-container > * + * { margin-top: var(--space-m); }
+
+/* only the section's own container: bars (notice, jump nav) bring their own inner container */
+main > .section > .cme-container > * + * { margin-top: var(--space-m); }
 main .section .cme-row > * > * + * { margin-top: var(--space-m); }
 
 /* Default content lead paragraph: first paragraph after an h2 in a section */
@@ -52,6 +54,16 @@ main > .section.page-tabs-container {
 }
 
 @media (width >= 993px) { main > .section.page-tabs-container { top: var(--navbar-height); } }
+
+/* Jump nav: same sticky behaviour as page tabs (reading.md); the bar keeps its own look */
+main > .section.jump-nav-container {
+  position: sticky;
+  top: var(--navbar-height-mobile);
+  z-index: 50;
+  padding: 0;
+}
+
+@media (width >= 993px) { main > .section.jump-nav-container { top: var(--navbar-height); } }
 
 /* stylelint-disable-next-line selector-class-pattern -- design-language BEM class */
 main > .section.page-tabs-container .cme-tabs--page {

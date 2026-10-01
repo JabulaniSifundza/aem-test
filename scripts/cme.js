@@ -1,9 +1,10 @@
 /*
- * CME Group design language: behaviours (v1.1.2). No dependencies.
+ * CME Group design language: behaviours (v1.1.3). No dependencies.
  * Load once with <script src=".../js/cme.js" defer></script>. Behaviour is driven by the
  * markup in components/*.md, so pages never need their own scripts for these:
  *   Accordion    .cme-accordion__header[aria-controls]   toggles its panel and aria-expanded
- *   Dropdown     .cme-dropdown__trigger[aria-controls]    opens/closes .cme-dropdown__menu;
+ *   Dropdown     .cme-dropdown__trigger[aria-controls], or the hero's link-style trigger
+ *                (.cme-dropdown > button[aria-controls]), opens/closes .cme-dropdown__menu;
  *                arrow keys and Home/End move through items; Escape, outside click or
  *                tabbing away close; [data-cme-select] items update the trigger label
  *   Tabs         [role=tablist] > button[role=tab][aria-controls]   switches [role=tabpanel]
@@ -21,6 +22,9 @@
     + 'textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
   const SPY_ROOTS = '.cme-jump-nav, .cme-tabs--page';
   const SPY_MARGIN = '-40% 0px -55% 0px';
+  // hero.md documents a link-style trigger (button.cme-link) for the "Explore …" menu
+  const TRIGGER = '.cme-dropdown__trigger, .cme-dropdown > button[aria-controls]';
+  const openTriggers = (root = document) => $$(TRIGGER, root).filter((t) => t.getAttribute('aria-expanded') === 'true');
 
   function setExpanded(trigger, panel, open) {
     trigger.setAttribute('aria-expanded', String(open));
@@ -42,7 +46,7 @@
   const menuItems = (menu) => $$(FOCUSABLE, menu).filter((el) => !el.closest('[hidden]'));
 
   function closeAllDropdowns(except) {
-    $$('.cme-dropdown__trigger[aria-expanded="true"]').forEach((t) => {
+    openTriggers().forEach((t) => {
       if (t === except) return;
       setExpanded(t, menuOf(t), false);
       emit(t.closest('.cme-dropdown') || t, { type: 'dropdown', open: false });
@@ -61,7 +65,7 @@
   }
 
   document.addEventListener('click', (e) => {
-    const t = e.target.closest('.cme-dropdown__trigger');
+    const t = e.target.closest(TRIGGER);
     if (t) {
       openDropdown(t, t.getAttribute('aria-expanded') !== 'true');
       return;
@@ -69,7 +73,7 @@
     const item = e.target.closest('.cme-dropdown__menu [data-cme-select]');
     if (item) {
       const dd = item.closest('.cme-dropdown');
-      const trig = dd && dd.querySelector('.cme-dropdown__trigger');
+      const trig = dd && dd.querySelector(TRIGGER);
       if (trig) {
         trig.textContent = item.getAttribute('data-cme-select') || item.textContent.trim();
         setExpanded(trig, item.closest('.cme-dropdown__menu'), false);
@@ -85,7 +89,7 @@
   // they move between items (wrapping); Home/End jump to the ends.
   document.addEventListener('keydown', (e) => {
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
-    const trigger = e.target.closest('.cme-dropdown__trigger');
+    const trigger = e.target.closest(TRIGGER);
     const menu = trigger ? null : e.target.closest('.cme-dropdown__menu');
     if (!trigger && !menu) return;
     if (trigger && !['ArrowDown', 'ArrowUp'].includes(e.key)) return;
@@ -109,7 +113,7 @@
   document.addEventListener('focusout', (e) => {
     const dd = e.target.closest('.cme-dropdown');
     if (!dd || !e.relatedTarget || dd.contains(e.relatedTarget)) return;
-    const t = dd.querySelector('.cme-dropdown__trigger[aria-expanded="true"]');
+    const [t] = openTriggers(dd);
     if (t) openDropdown(t, false);
   });
 
@@ -127,7 +131,7 @@
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    const open = $$('.cme-dropdown__trigger[aria-expanded="true"]');
+    const open = openTriggers();
     closeAllDropdowns();
     if (open[0]) open[0].focus();
     const header = document.querySelector('.cme-header.is-menu-open');
@@ -226,7 +230,7 @@
       const p = byId(h.getAttribute('aria-controls'));
       if (p) p.hidden = h.getAttribute('aria-expanded') !== 'true';
     });
-    within('.cme-dropdown__trigger[aria-controls]').forEach((t) => {
+    within(TRIGGER).forEach((t) => {
       const m = byId(t.getAttribute('aria-controls'));
       if (m) m.hidden = t.getAttribute('aria-expanded') !== 'true';
     });

@@ -1,11 +1,12 @@
 import {
-  el, icon, text, rows, deltaClass, cmeLink,
+  el, icon, text, rows, deltaClass, cmeLink, exploreMenu,
 } from '../../scripts/cme-dom.js';
 
 /*
  * Product Hero — design-language "product hero with live stats" (hero.md).
  * Author table, one row per item (first cell is the key, case-insensitive):
  *   Breadcrumb | link to the asset-class page
+ *   Explore …  | links; the key text ("Explore JB Future Index") becomes a link menu
  *   Title      | product name (becomes the page's single h1)
  *   Subtitle   | e.g. Futures and options
  *   Actions    | links; a bold link becomes the one primary button, others secondary
@@ -22,17 +23,24 @@ export default function decorate(block) {
     const key = text(keyCell).toLowerCase();
     if (!valueCell) return;
     if (KEYS.includes(key)) data[key] = valueCell;
+    else if (key.startsWith('explore')) data.explore = { label: text(keyCell), cell: valueCell };
     else if (key) data.stats.push({ label: text(keyCell), value: text(valueCell) });
   });
 
   const children = [];
 
+  const navParts = [];
   const crumb = data.breadcrumb?.querySelector('a');
   if (crumb) {
     const link = cmeLink(crumb, 'cme-breadcrumb');
     link.prepend(icon('arrow-left-bold'));
-    children.push(el('div', { class: 'cme-hero__nav' }, link));
+    navParts.push(link);
   }
+  if (data.explore) {
+    const menu = exploreMenu(data.explore.label, [...data.explore.cell.querySelectorAll('a')]);
+    if (menu) navParts.push(menu);
+  }
+  if (navParts.length) children.push(el('div', { class: 'cme-hero__nav' }, navParts));
 
   children.push(el('h1', { class: 'cme-hero__title', id: 'product-title' }, text(data.title) || '{{Product}}'));
   if (data.subtitle) children.push(el('p', { class: 'cme-hero__subtitle' }, text(data.subtitle)));
