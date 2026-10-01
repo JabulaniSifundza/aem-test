@@ -143,7 +143,8 @@ function decorateButtons(main) {
 }
 
 /**
- * Applies Section Metadata (Style, Id, Layout) to its section and removes the table.
+ * Applies Section Metadata (Style, Id, Layout) to its section and removes the table
+ * (or reads them from the section when the server has already applied them).
  * Styles map to the design language: subtle, inverse, deep, indigo, deepest, tight, flush.
  * @param {Element} main The container element
  */
@@ -155,10 +156,12 @@ function decorateSectionMetadata(main) {
   main.querySelectorAll(':scope > .section').forEach((section) => {
     section.classList.add('cme-section');
     const meta = section.querySelector(':scope > div > .section-metadata');
-    if (!meta) return;
-    const config = readBlockConfig(meta);
+    const config = meta ? readBlockConfig(meta) : {};
+    // Edge Delivery usually applies Section Metadata on the server: Style values arrive as
+    // classes on the section, Id as its id and other keys as data-* attributes.
     const styles = [].concat(config.style || []).join(',').split(',')
       .map((s) => toClassName(s.trim()))
+      .concat([...section.classList])
       .filter(Boolean);
     styles.forEach((style) => {
       if (SECTION_FLAGS.includes(style)) section.dataset[style] = 'true';
@@ -168,7 +171,7 @@ function decorateSectionMetadata(main) {
     });
     if (config.id) section.id = toClassName(config.id);
     if (config.layout) section.dataset.layout = String(config.layout).trim();
-    meta.parentElement.remove();
+    if (meta) meta.parentElement.remove();
   });
 }
 
