@@ -229,7 +229,8 @@ function decorateSectionLayout(main) {
  * (typography.md, button.md):
  * - a Heading 6 directly above a heading is that heading's eyebrow (p.cme-eyebrow);
  * - a paragraph that is entirely italic (and not a link) is a lead paragraph (p.cme-lead);
- * - a paragraph holding only a "View all …" link becomes the view-all link.
+ * - a paragraph holding only a "View all …" link becomes the view-all link;
+ * - a paragraph that is entirely subscript is fine print (p.cme-fine, e.g. data timestamps).
  * @param {Element} main The container element
  */
 function decorateDefaultContent(main) {
@@ -246,6 +247,9 @@ function decorateDefaultContent(main) {
     if (!only || p.textContent.trim() !== only.textContent.trim()) return;
     if (only.tagName === 'EM' && !only.querySelector('a')) {
       p.className = 'cme-lead';
+      p.replaceChildren(...only.childNodes);
+    } else if (only.tagName === 'SUB') {
+      p.className = 'cme-fine cme-mt-s';
       p.replaceChildren(...only.childNodes);
     } else if (only.tagName === 'A' && /^view all/i.test(only.textContent.trim())) {
       only.className = 'cme-view-all';
