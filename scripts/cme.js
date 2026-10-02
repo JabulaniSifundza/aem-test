@@ -1,5 +1,5 @@
 /*
- * CME Group design language: behaviours (v1.1.3). No dependencies.
+ * CME Group design language: behaviours (v1.1.4). No dependencies.
  * Load once with <script src=".../js/cme.js" defer></script>. Behaviour is driven by the
  * markup in components/*.md, so pages never need their own scripts for these:
  *   Accordion    .cme-accordion__header[aria-controls]   toggles its panel and aria-expanded
@@ -11,6 +11,8 @@
  *   Mobile menu  .cme-header__menu-btn                    toggles .is-menu-open on .cme-header
  *   Notice       .cme-notice__close                       hides its .cme-notice, keeps focus
  *   Scroll-spy   .cme-jump-nav and .cme-tabs--page links to #ids mark the section in view
+ *   Legend       .cme-chart__legend button[aria-pressed] shows/hides its series (one stays on);
+ *                the chart code listens for cme:change { type: 'legend', series, index, shown }
  * Content added later (EDS fragments, lazily decorated blocks) is set up automatically.
  * Fires a bubbling "cme:change" CustomEvent on the component root after every state change.
  */
@@ -166,6 +168,23 @@
     tabs[i].focus();
     if (tabs[i].tagName !== 'A' && tabs[i].hasAttribute('aria-controls')) selectTab(tabs[i]);
     e.preventDefault();
+  });
+
+  // Chart legend toggles (chart.md): the button flips aria-pressed and announces the change;
+  // the page's chart code redraws. The last visible series cannot be switched off.
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.cme-chart__legend button[aria-pressed]');
+    if (!btn) return;
+    const legend = btn.closest('.cme-chart__legend');
+    const shown = btn.getAttribute('aria-pressed') !== 'true';
+    if (!shown && $$('button[aria-pressed="true"]', legend).length <= 1) return;
+    btn.setAttribute('aria-pressed', String(shown));
+    emit(legend, {
+      type: 'legend',
+      series: btn.getAttribute('data-series') || btn.textContent.trim(),
+      index: Array.from(legend.children).indexOf(btn.closest('li')),
+      shown,
+    });
   });
 
   // Notice dismiss: focus moves to what follows the notice, not back to the top of the page.

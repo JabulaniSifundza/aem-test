@@ -4,7 +4,7 @@
    Components read --ctx-* (set by base.css) so they adapt inside .cme-inverse automatically. */
 
 /* Light surfaces that can sit inside dark sections reset the context to light. */
-:where(.cme-card, .cme-card--horizontal, .cme-tile, .cme-accordion, .cme-spec, .cme-dropdown__menu, .cme-detail-hero__panel, .cme-notice, .cme-facts--boxed .cme-fact):not(.cme-inverse) {
+:where(.cme-card, .cme-card--horizontal, .cme-tile, .cme-accordion, .cme-spec, .cme-dropdown__menu, .cme-detail-hero__panel, .cme-notice):not(.cme-inverse) {
   --ctx-heading: var(--color-text-heading); --ctx-body: var(--color-text-body); --ctx-muted: var(--color-text-body);
   --ctx-link: var(--color-text-link); --ctx-eyebrow: var(--color-text-eyebrow); --ctx-border: var(--color-border-subtle);
   --ctx-gain: var(--color-data-gain); --ctx-loss: var(--color-data-loss);
@@ -295,8 +295,10 @@ a.cme-card:hover .cme-card__title { color: var(--ctx-link); }
 .cme-inverse .cme-dropdown__trigger { background: var(--color-surface-inverse-control); color: var(--color-text-inverse); }
 .cme-dropdown__menu { position: absolute; z-index: 60; top: calc(100% + 2px); left: 0; min-width: 100%; padding: 8px 0; background: var(--color-surface-page); box-shadow: var(--shadow-header); }
 .cme-dropdown__menu[hidden] { display: none; }
-.cme-dropdown__item { display: flex; align-items: center; gap: var(--space-xs); padding: 7px 16px; color: var(--color-text-body); font: var(--type-small-weight) 14px/20px var(--font-sans); text-decoration: none; }
-.cme-dropdown__item:hover { background: var(--color-surface-subtle); text-decoration: none; }
+.cme-dropdown__item { display: flex; align-items: center; gap: var(--space-xs); width: 100%; padding: 7px 16px; border: 0; background: none; color: var(--color-text-body); font: var(--type-small-weight) 14px/20px var(--font-sans); text-align: left; text-decoration: none; white-space: nowrap; cursor: pointer; }
+.cme-dropdown__item:hover, .cme-dropdown__item:focus-visible { background: var(--color-surface-subtle); text-decoration: none; }
+.cme-dropdown__item[aria-checked="true"], .cme-dropdown__item[aria-current="true"] { color: var(--color-text-heading); font-weight: var(--weight-semibold); }
+.cme-hero__nav .cme-dropdown:last-child .cme-dropdown__menu { left: auto; right: 0; }
 
 /* =========================================================
    10. PAGINATION
@@ -399,7 +401,7 @@ a.cme-card:hover .cme-card__title { color: var(--ctx-link); }
 .cme-step__text { margin: 0; }
 
 /* 19. CHART PANEL (site: EDS volume-chart in gray6 .padding-m) */
-.cme-chart { padding: var(--space-m); background: var(--color-chart-panel); }
+.cme-chart { margin: 0; padding: var(--space-m); background: var(--color-chart-panel); }
 .cme-inverse .cme-chart, .cme-chart.cme-inverse { background: var(--color-surface-inverse-deep); }
 .cme-section--subtle .cme-chart { background: var(--color-surface-page); }
 .cme-chart__header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 16px; margin-bottom: var(--space-s); }
@@ -414,6 +416,11 @@ a.cme-card:hover .cme-card__title { color: var(--ctx-link); }
 .cme-chart__legend li::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: var(--swatch, var(--color-chart-series-1)); }
 .cme-chart__legend .cme-series-1 { --swatch: var(--color-chart-series-1); } .cme-chart__legend .cme-series-2 { --swatch: var(--color-chart-series-2); }
 .cme-chart__legend .cme-series-3 { --swatch: var(--color-chart-series-3); } .cme-chart__legend .cme-series-4 { --swatch: var(--color-chart-series-4); }
+/* Legend toggles (website standard): a button per item shows or hides its series; off = hollow swatch, muted text */
+.cme-chart__legend button { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.cme-chart__legend button:hover { text-decoration: underline; }
+.cme-chart__legend li:has(> button[aria-pressed="false"])::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--swatch, var(--color-chart-series-1)); }
+.cme-chart__legend button[aria-pressed="false"] { color: var(--ctx-muted); text-decoration: line-through; }
 .cme-chart__note { margin: var(--space-xs) 0 0; font: var(--type-fine-weight) var(--type-fine-size)/var(--type-fine-line) var(--type-fine-family); color: var(--ctx-muted); }
 
 /* 20. STATUS TAG (composed from site .featured-tag text style; never a filled badge) */

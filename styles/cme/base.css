@@ -87,6 +87,9 @@ ul.cme-list-plain { list-style: none; margin: 0; padding: 0; }
 
 /* ---------- Layout: section → container → row → col ---------- */
 .cme-section { position: relative; padding-block: var(--space-m); background: var(--color-surface-page); }
+/* in-page anchors land below the sticky header and the page tabs / jump nav bar (80px) */
+.cme-section[id] { scroll-margin-top: calc(var(--navbar-height-mobile, 64px) + 80px); }
+@media (min-width: 993px) { .cme-section[id] { scroll-margin-top: calc(var(--navbar-height, 100px) + 80px); } }
 @media (min-width: 769px) { .cme-section { padding-block: var(--space-l); } }
 .cme-section--tight { padding-block: var(--space-s); }
 @media (min-width: 769px) { .cme-section--tight { padding-block: var(--space-m); } }
