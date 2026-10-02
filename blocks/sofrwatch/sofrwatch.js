@@ -1,0 +1,421 @@
+import {
+  el, icon, text, keyedRows, cmeLink, exploreMenu,
+} from '../../scripts/cme-dom.js';
+import { lineChart, seriesColor } from '../../scripts/fedwatch/charts.js';
+import {
+  MON, parts, fmtDate, fmtLong, nbsp, esc, decisionUtc, register, redraw, redrawAll,
+} from '../../scripts/fedwatch/model.js';
+import { toUtc, addDays } from '../../scripts/sofrwatch/engine.js';
+import {
+  loadModel, setScenario, presetChanges, PRESETS,
+} from '../../scripts/sofrwatch/model.js';
+
+/*
+ * SOFRWatch — where CME SOFR futures could settle if your view of the FOMC prevails, built
+ * from design-language components (hero.md, forms.md, filter-dropdown.md, spec-panel.md,
+ * facts-steps.md, tabs.md, table.md, chart.md with legend toggles).
+ *   SOFRWatch (hero)      page hero with a countdown to the next FOMC decision.
+ *                         Rows: Breadcrumb | link, Explore … | links, Title,
+ *                         Actions | link (the hero's one bold link), Footnote
+ *   SOFRWatch (scenario)  a policy change for every meeting (FedWatch's most likely path to
+ *                         start), presets, and the spread assumptions
+ *   SOFRWatch (results)   SR3 and SR1 tables (market vs your scenario), then the charts:
+ *                         overnight SOFR path and the SR3 curve
+ * Any of them may carry a "Data" row with a link to a JSON file shaped like
+ * /scripts/sofrwatch/sample-data.json; without a link the built-in, illustrative sample is used.
+ */
+
+const asOfText = (M) => `Data as of ${fmtDate(M.D.asOf)}${M.D.sample ? ' (sample)' : ''}`;
+const q = (root, name) => root.querySelector(`[data-sw="${name}"]`);
+const fmtD = (iso) => fmtDate(iso);
+const rate2 = (r, dp = 2) => `${r.toFixed(dp)}%`;
+const price = (p) => p.toFixed(4);
+const bps = (x, dp = 1) => {
+  const v = Math.abs(x) < 0.05 ? 0 : x;
+  return `${v > 0 ? '+' : ''}${v.toFixed(dp)}`;
+};
+const moveText = (bp) => {
+  if (Math.abs(bp) < 0.05) return 'no change';
+  return `${bp > 0 ? 'a hike of' : 'a cut of'} ${Math.abs(bp)} bps`;
+};
+const quarterText = (c) => `${nbsp(fmtD(c.start))} – ${nbsp(fmtD(c.end))}`;
+const monthText = (c) => { const [y, m] = parts(c.start); return `${MON[m - 1]} ${y}`; };
+const shortCode = (code) => code.slice(-2);
+const hiddenSeries = new WeakMap();
+const hiddenOf = (canvas) => {
+  if (!hiddenSeries.has(canvas)) hiddenSeries.set(canvas, new Set());
+  return hiddenSeries.get(canvas);
+};
+const toggles = (items) => items.map(([i, t]) => `<li class="cme-series-${i}"><button type="button" aria-pressed="true" data-series="${esc(t)}">${esc(t)}</button></li>`).join('');
+
+function chartPanel(key, title, axis, legendItems, note) {
+  return `<figure class="cme-chart">
+    <div class="cme-chart__header"><h3 class="cme-chart__title" id="sw-${key}-title">${esc(title)}</h3></div>
+    <div class="cme-chart__canvas" data-sw-chart="${key}"></div>
+    <div class="cme-chart__footer"><span class="cme-chart__axis-label">${esc(axis)}</span><ul class="cme-chart__legend" aria-label="Show or hide series">${toggles(legendItems)}</ul></div>
+    <figcaption class="cme-chart__note">${esc(note)}</figcaption>
+  </figure>`;
+}
+
+/** Plain-language summary of a scenario. */
+function scenarioSummary(M) {
+  const moves = M.D.meetings.map((m, i) => ({ date: m.date, bp: M.scenario[i] }))
+    .filter((x) => Math.abs(x.bp) >= 0.05);
+  const net = M.scenario.reduce((a, b) => a + b, 0);
+  const last = M.D.meetings[M.D.meetings.length - 1].date;
+  if (!moves.length) return `No change at any meeting through ${fmtD(last)}`;
+  const list = moves.length <= 3
+    ? moves.map((x) => `${bps(x.bp, Number.isInteger(x.bp) ? 0 : 1)} bps on ${fmtD(x.date)}`).join(', ')
+    : `${moves.length} moves`;
+  return `${list} · net ${bps(net, Number.isInteger(net) ? 0 : 1)} bps by ${fmtD(last)}`;
+}
+
+// ---------- hero: countdown to the next decision ----------
+function renderHero(block, M, author) {
+  const nav = [];
+  const crumb = author.get('breadcrumb')?.querySelector('a');
+  if (crumb) {
+    const link = cmeLink(crumb, 'cme-breadcrumb');
+    link.prepend(icon('arrow-left-bold'));
+    nav.push(link);
+  }
+  const exploreKey = [...author.keys()].find((k) => k.startsWith('explore'));
+  if (exploreKey) {
+    const label = text(author.get(exploreKey).parentElement.firstElementChild);
+    const menu = exploreMenu(label, [...author.get(exploreKey).querySelectorAll('a')]);
+    if (menu) nav.push(menu);
+  }
+  const cta = author.get('actions')?.querySelector('a');
+  const notes = author.get('footnote') ? [...author.get('footnote').querySelectorAll('p')].map(text).filter(Boolean) : [];
+  const { D } = M;
+  const lastFix = D.fixings[D.asOf];
+  const unit = (label, slot) => el(
+    'li',
+    { class: 'cme-fact' },
+    el('span', { class: 'cme-fact__value', 'data-sw': slot }, '–'),
+    el('span', { class: 'cme-fact__label' }, label),
+  );
+  block.replaceChildren(
+    nav.length ? el('div', { class: 'cme-hero__nav' }, nav) : '',
+    el(
+      'div',
+      { class: 'cme-row cme-row--wide cme-row--align-center' },
+      el(
+        'div',
+        { class: 'cme-col-md-6' },
+        el('p', { class: 'cme-eyebrow cme-hero__eyebrow' }, 'Next FOMC decision'),
+        el('h1', { class: 'cme-hero__title', id: 'sw-page-title' }, text(author.get('title')) || 'CME SOFRWatch'),
+        el('p', { class: 'cme-lead' }, `Overnight SOFR fixed at ${rate2(lastFix)} on ${fmtD(D.asOf)}. Set your view of each FOMC meeting and see where SOFR futures would settle.`),
+        cta ? el('a', { class: 'cme-link-bold', href: cta.getAttribute('href') }, icon('arrow-right'), el('span', { class: 'cme-link__text' }, text(cta))) : '',
+      ),
+      el(
+        'div',
+        {
+          class: 'cme-col-md-6',
+          'data-cme-gap': 'hero-countdown',
+          'data-cme-gap-note': 'hero.md has no countdown slot; the countdown is two boxed facts (days; hours:minutes:seconds) in the right half of the page hero.',
+        },
+        el('p', { class: 'cme-overline', 'data-sw': 'hero-when' }),
+        el(
+          'div',
+          { role: 'timer', 'data-sw': 'hero-timer' },
+          el('ul', { class: 'cme-facts cme-facts--boxed' }, unit('Days', 'cd-d'), unit('Hours : minutes : seconds', 'cd-hms')),
+        ),
+        el('p', { class: 'cme-fine cme-mt-s cme-mb-0' }, [asOfText(M), ...notes].join(' · ')),
+      ),
+    ),
+  );
+  const section = block.closest('.section');
+  if (section) {
+    section.classList.add('cme-section--inverse', 'cme-inverse', 'cme-hero');
+    section.setAttribute('role', 'region');
+    section.setAttribute('aria-labelledby', 'sw-page-title');
+  }
+  const two = (n) => String(n).padStart(2, '0');
+  let shownFor;
+  const tick = () => {
+    const next = D.meetings.map((m) => m.date).find((iso) => decisionUtc(iso) > Date.now()) || null;
+    if (next !== shownFor) {
+      shownFor = next;
+      q(block, 'hero-when').textContent = next ? `${fmtLong(next)} · 2:00 PM ET` : 'No meetings scheduled in this data';
+      if (next) q(block, 'hero-timer').setAttribute('aria-label', `Time until the FOMC decision on ${fmtLong(next)} at 2:00 PM ET`);
+    }
+    const ms = next ? Math.max(0, decisionUtc(next) - Date.now()) : 0;
+    q(block, 'cd-d').textContent = String(Math.floor(ms / 864e5));
+    q(block, 'cd-hms').textContent = [
+      Math.floor((ms % 864e5) / 36e5), Math.floor((ms % 36e5) / 6e4), Math.floor((ms % 6e4) / 1e3),
+    ].map(two).join(':');
+  };
+  tick();
+  setInterval(tick, 1000);
+}
+
+// ---------- scenario: one change per meeting ----------
+function renderScenario(block, M) {
+  const { D } = M;
+  const lower = D.targetLower;
+  const spreadBp = D.spreads.effrToLowerBp + D.spreads.sofrToEffrBp;
+  const spec = [
+    ['Target range today', `${lower.toFixed(2)}–${(lower + 0.25).toFixed(2)}%`],
+    ['Last decision', `${bps(D.lastDecision.changeBp, 0)} bps`, `on ${fmtD(D.lastDecision.date)}`],
+    ['EFFR minus lower bound', `${bps(D.spreads.effrToLowerBp, 0)} bps`],
+    ['SOFR minus EFFR', `${bps(D.spreads.sofrToEffrBp, 0)} bps`, '3-month average'],
+    ['Implied overnight SOFR', rate2(lower + spreadBp / 100), 'before any change'],
+    ['Last SOFR fixing', rate2(D.fixings[D.asOf]), `on ${fmtD(D.asOf)}`],
+  ];
+  const field = (m, i) => `<div class="cme-col-md-4">
+      <div class="cme-field" data-sw-field="${i}">
+        <label class="cme-field__label" for="sw-m-${m.date}">${nbsp(fmtD(m.date))} (bps)</label>
+        <input class="cme-input" id="sw-m-${m.date}" name="m${i}" type="number" step="any" inputmode="decimal" min="-500" max="500" value="${M.scenario[i]}" aria-describedby="sw-h-${m.date} sw-e-${m.date}">
+        <p class="cme-fine cme-mt-xs cme-mb-0" id="sw-h-${m.date}" data-sw="hint-${i}"></p>
+        <p class="cme-field__error" id="sw-e-${m.date}" hidden>Enter basis points between -500 and 500, e.g. -25.</p>
+      </div>
+    </div>`;
+  block.innerHTML = `
+    <div class="cme-row cme-row--wide">
+      <div class="cme-col-lg-8">
+        <div class="cme-toolbar">
+          <p class="cme-toolbar__count cme-mb-0" aria-live="polite" data-sw="summary"></p>
+          <div class="cme-dropdown">
+            <button class="cme-dropdown__trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="sw-presets" data-sw="preset-trigger"></button>
+            <div class="cme-dropdown__menu" id="sw-presets" role="menu" hidden>
+              ${Object.entries(PRESETS).map(([k, label]) => `<button class="cme-dropdown__item" role="menuitemradio" aria-checked="false" type="button" data-value="${k}" data-cme-select="Start from: ${label}">${label}</button>`).join('')}
+            </div>
+          </div>
+        </div>
+        <form data-sw="form" novalidate>
+          <fieldset class="cme-fieldset">
+            <legend class="cme-fieldset__legend">Change at each FOMC meeting, in basis points (-25 is a cut, +25 a hike)</legend>
+            <div class="cme-row">${D.meetings.map(field).join('')}</div>
+          </fieldset>
+        </form>
+      </div>
+      <div class="cme-col-lg-4">
+        <div class="cme-spec">
+          <div class="cme-spec__header"><h3 class="cme-spec__title">Starting point</h3></div>
+          <ul class="cme-spec__list">${spec.map(([l, v, unit]) => `<li><h4 class="cme-spec__label">${l}</h4><p class="cme-spec__value"><span class="cme-data-md">${esc(v)}</span>${unit ? ` ${esc(unit)}` : ''}</p></li>`).join('')}</ul>
+          <p class="cme-spec__updated">The spread between the lower bound and overnight SOFR is held constant. ${esc(asOfText(M))}.</p>
+        </div>
+      </div>
+    </div>`;
+
+  const inputs = [...block.querySelectorAll('input[type="number"]')];
+  const sync = () => {
+    q(block, 'summary').textContent = `Your scenario: ${scenarioSummary(M)}`;
+    q(block, 'preset-trigger').textContent = `Start from: ${PRESETS[M.preset] || 'your own view'}`;
+    block.querySelectorAll('#sw-presets [data-value]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.value === M.preset)));
+    let range = D.targetLower;
+    D.meetings.forEach((m, i) => {
+      range += M.scenario[i] / 100;
+      const fw = `FedWatch most likely: ${moveText(m.mostLikelyChangeBp)} (${(m.mostLikelyProb * 100).toFixed(1)}%)`;
+      q(block, `hint-${i}`).textContent = `Range after: ${range.toFixed(2)}–${(range + 0.25).toFixed(2)}% · ${fw}`;
+      if (document.activeElement !== inputs[i]) inputs[i].value = String(M.scenario[i]);
+    });
+  };
+  M.views.add(sync);
+  sync();
+
+  let timer;
+  const read = () => {
+    let valid = true;
+    const values = inputs.map((inp) => {
+      const v = inp.value.trim() === '' ? 0 : Number(inp.value);
+      const bad = !Number.isFinite(v) || v < -500 || v > 500;
+      const fieldEl = inp.closest('.cme-field');
+      fieldEl.classList.toggle('cme-field--error', bad);
+      if (bad) inp.setAttribute('aria-invalid', 'true'); else inp.removeAttribute('aria-invalid');
+      fieldEl.querySelector('.cme-field__error').hidden = !bad;
+      if (bad) valid = false;
+      return bad ? null : v;
+    });
+    if (valid) setScenario(M, values, null);
+  };
+  block.querySelector('form').addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(read, 200);
+  });
+  block.querySelector('form').addEventListener('submit', (e) => e.preventDefault());
+}
+
+// ---------- results: tables, then charts ----------
+function renderResults(block, M) {
+  block.innerHTML = `
+    <p class="cme-small" data-sw="line"></p>
+    <ul class="cme-facts" data-sw="facts"></ul>
+    <div class="cme-toolbar cme-mt-m" data-cme-gap="tabs-with-action" data-cme-gap-note="Content tabs with a download action on the same line; used the result toolbar layout to hold both.">
+      <div class="cme-tabs" role="tablist" aria-label="Settlement tables">
+        <button class="cme-tabs__tab is-active" role="tab" aria-selected="true" aria-controls="sw-sr3" id="sw-tab-sr3" type="button">Three-month SOFR</button>
+        <button class="cme-tabs__tab" role="tab" aria-selected="false" aria-controls="sw-sr1" id="sw-tab-sr1" type="button">One-month SOFR</button>
+      </div>
+      <button class="cme-btn cme-btn--secondary" type="button" data-sw-download><span class="cme-icon cme-icon--download" aria-hidden="true"></span>Download results</button>
+    </div>
+    <div role="tabpanel" id="sw-sr3" aria-labelledby="sw-tab-sr3">
+      <div class="cme-table-wrap">
+        <table class="cme-table">
+          <caption class="cme-visually-hidden">Three-Month SOFR futures: market price and the settlement your scenario implies</caption>
+          <thead><tr><th scope="col">Contract</th><th scope="col">Reference quarter</th><th scope="col">Market price</th><th scope="col">Your scenario</th><th scope="col">Difference (bps)</th><th scope="col">Implied rate</th></tr></thead>
+          <tbody data-sw="sr3-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div role="tabpanel" id="sw-sr1" aria-labelledby="sw-tab-sr1" hidden>
+      <div class="cme-table-wrap">
+        <table class="cme-table">
+          <caption class="cme-visually-hidden">One-Month SOFR futures: market price and the settlement your scenario implies</caption>
+          <thead><tr><th scope="col">Contract</th><th scope="col">Month</th><th scope="col">Market price</th><th scope="col">Your scenario</th><th scope="col">Difference (bps)</th><th scope="col">Implied rate</th></tr></thead>
+          <tbody data-sw="sr1-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <p class="cme-fine cme-mt-s cme-mb-0">A positive difference means the contract would settle above today's market price under your scenario. Contracts in their reference period use actual fixings to date.</p>
+    <h3 class="cme-mt-l">Charts</h3>
+    <div class="cme-tabs" role="tablist" aria-label="Charts">
+      <button class="cme-tabs__tab is-active" role="tab" aria-selected="true" aria-controls="sw-view-path" id="sw-tab-path" type="button">Overnight SOFR</button>
+      <button class="cme-tabs__tab" role="tab" aria-selected="false" aria-controls="sw-view-curve" id="sw-tab-curve" type="button">SR3 curve</button>
+    </div>
+    <div role="tabpanel" id="sw-view-path" aria-labelledby="sw-tab-path" class="cme-mt-m">
+      ${chartPanel('path', 'Overnight SOFR: actual fixings and implied path', 'Date', [[1, 'Actual fixings'], [2, 'Your scenario'], [3, 'Market (FedWatch expected)']], 'Implied paths hold the spread to the lower bound constant and change only after FOMC decisions. Select a series in the legend to show or hide it; focus the chart and use the arrow keys to read each week.')}
+    </div>
+    <div role="tabpanel" id="sw-view-curve" aria-labelledby="sw-tab-curve" class="cme-mt-m" hidden>
+      ${chartPanel('curve', 'Three-month SOFR curve: implied rates by contract', 'Contract', [[2, 'Your scenario'], [3, 'Market']], 'Implied rate = 100 minus the price. The values are in the Three-month SOFR table above. Select a series in the legend to show or hide it.')}
+    </div>`;
+
+  const { D } = M;
+  const row = (r, period) => {
+    const diff = r.diffBp;
+    const cls = diff === null || Math.abs(diff) < 0.05 ? '' : ` ${diff > 0 ? 'cme-gain' : 'cme-loss'}`;
+    return `<tr><td class="cme-table__name">${r.code}</td><td class="cme-table__text">${period}${r.running ? ' (running)' : ''}</td><td class="cme-num">${r.market === undefined ? '—' : price(r.market)}</td><td class="cme-num">${price(r.implied)}</td><td class="cme-num${cls}">${diff === null ? '—' : bps(diff)}</td><td class="cme-num">${rate2(r.impliedRate, 3)}</td></tr>`;
+  };
+  // the chart x axis: weekly points from the first fixing to the end of the SR3 strip
+  const first = Object.keys(D.fixings).sort()[0];
+  const lastEnd = M.sr3[M.sr3.length - 1].end;
+  const days = [];
+  for (let t = toUtc(first); t <= toUtc(lastEnd); t += 7 * 864e5) {
+    days.push(new Date(t).toISOString().slice(0, 10));
+  }
+  if (!days.includes(D.asOf)) days.push(D.asOf);
+  days.sort();
+
+  const draw = () => {
+    const {
+      sr3, sr1, user, market,
+    } = M.results;
+    q(block, 'sr3-body').innerHTML = sr3.map((r) => row(r, quarterText(r))).join('');
+    q(block, 'sr1-body').innerHTML = sr1.map((r) => row(r, monthText(r))).join('');
+    q(block, 'line').innerHTML = `Your scenario: ${esc(scenarioSummary(M))} · <a href="#scenario">Change your scenario</a>`;
+    const gap = sr3.filter((r) => r.diffBp !== null)
+      .reduce((a, b) => (Math.abs(b.diffBp) > Math.abs(a.diffBp) ? b : a));
+    const front = sr3.find((r) => !r.running) || sr3[0];
+    const endRate = user(addDays(M.D.meetings[M.D.meetings.length - 1].date, 2));
+    const facts = [
+      [rate2(endRate), 'Overnight SOFR after the last meeting', 'Your scenario'],
+      [price(front.implied), `${front.code} settlement`, `Market ${price(front.market)}`],
+      [`${bps(gap.diffBp)}`, `Largest gap: ${gap.code}`, 'Basis points, your scenario minus market'],
+    ];
+    q(block, 'facts').innerHTML = facts.map(([v, l, note]) => `<li class="cme-fact"><span class="cme-fact__value">${esc(v)}</span><span class="cme-fact__label">${esc(l)}</span><span class="cme-fact__note">${esc(note)}</span></li>`).join('');
+    M.csv = [['Contract', 'Reference start', 'Reference end', 'Market price', 'Your scenario', 'Difference (bps)', 'Implied rate (%)']]
+      .concat([...sr3, ...sr1].map((r) => [r.code, r.start, r.end, r.market ?? '', r.implied.toFixed(4), r.diffBp === null ? '' : r.diffBp.toFixed(2), r.impliedRate.toFixed(4)]))
+      .map((x) => x.join(',')).join('\n');
+
+    register(block.querySelector('[data-sw-chart="path"]'), (c) => {
+      const hidden = hiddenOf(c);
+      const xs = days.map(toUtc);
+      const ticks = days.filter((d) => d.slice(8) <= '07' && ['01', '04', '07', '10'].includes(d.slice(5, 7)))
+        .map((d) => { const [y, m] = parts(d); return { x: toUtc(d), text: `${MON[m - 1]} ’${String(y).slice(2)}` }; });
+      lineChart(c, {
+        label: 'Line chart: overnight SOFR actual fixings, the path your scenario implies and the market path. Focus the chart and use the arrow keys to read each week.',
+        xs,
+        xTicks: ticks,
+        xLabel: (i) => `Week of ${fmtD(days[i])}`,
+        series: [
+          { name: 'Actual fixings', color: seriesColor(0), values: days.map((d) => (d <= D.asOf ? user(d) : null)) },
+          { name: 'Your scenario', color: seriesColor(1), values: days.map((d) => (d >= D.asOf ? user(d) : null)) },
+          { name: 'Market (FedWatch expected)', color: seriesColor(2), values: days.map((d) => (d >= D.asOf ? market(d) : null)) },
+        ].map((s) => ({ ...s, hidden: hidden.has(s.name) })),
+        yFmt: (v) => rate2(v, 3),
+        yTickFmt: (v) => `${v.toFixed(2)}%`,
+      });
+    });
+    register(block.querySelector('[data-sw-chart="curve"]'), (c) => {
+      const hidden = hiddenOf(c);
+      lineChart(c, {
+        label: 'Line chart: three-month SOFR implied rates by contract, your scenario against the market. The table above lists the values.',
+        xs: sr3.map((_, i) => i),
+        xPad: 12,
+        xTicks: sr3.map((r, i) => ({ x: i, text: shortCode(r.code) })),
+        xLabel: (i) => `${sr3[i].code} (${quarterText(sr3[i]).replace(/\u00a0/g, ' ')})`,
+        series: [
+          {
+            name: 'Your scenario', color: seriesColor(1), markers: true, values: sr3.map((r) => r.impliedRate),
+          },
+          {
+            name: 'Market', color: seriesColor(2), markers: true, values: sr3.map((r) => r.marketRate),
+          },
+        ].map((s) => ({ ...s, hidden: hidden.has(s.name) })),
+        yFmt: (v) => rate2(v, 3),
+        yTickFmt: (v) => `${v.toFixed(2)}%`,
+      });
+    });
+  };
+  M.views.add(draw);
+  draw();
+}
+
+// ---------- page-wide events ----------
+let wired = false;
+function wire(M) {
+  if (wired) return;
+  wired = true;
+  document.addEventListener('cme:change', (e) => {
+    const { detail } = e;
+    if (!detail) return;
+    if (detail.type === 'select' && e.target.querySelector?.('#sw-presets')) {
+      setScenario(M, presetChanges(M, detail.value), detail.value);
+    }
+    if (detail.type === 'tab') requestAnimationFrame(redrawAll);
+    if (detail.type === 'legend') {
+      const canvas = e.target.closest('.cme-chart')?.querySelector('[data-sw-chart]');
+      if (!canvas) return;
+      const hidden = hiddenOf(canvas);
+      if (detail.shown) hidden.delete(detail.series); else hidden.add(detail.series);
+      redraw(canvas);
+    }
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-sw-download]')) return;
+    const url = URL.createObjectURL(new Blob([M.csv], { type: 'text/csv' }));
+    const a = el('a', { href: url, download: `sofrwatch-scenario-${M.D.asOf}.csv` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  window.addEventListener('load', redrawAll);
+  if (document.fonts) document.fonts.ready.then(redrawAll);
+}
+
+const VIEWS = { hero: renderHero, scenario: renderScenario, results: renderResults };
+
+export default async function decorate(block) {
+  const author = keyedRows(block);
+  const variant = Object.keys(VIEWS).find((v) => block.classList.contains(v)) || 'results';
+  const dataCell = author.get('data');
+  const typed = text(dataCell);
+  const dataUrl = dataCell?.querySelector('a')?.getAttribute('href')
+    || (/^(\/|https?:\/\/)/.test(typed) ? typed : '');
+  block.replaceChildren();
+  try {
+    const M = await loadModel(dataUrl);
+    VIEWS[variant](block, M, author);
+    wire(M);
+  } catch (e) {
+    block.replaceChildren(el(
+      'div',
+      { class: 'cme-empty', role: 'status' },
+      el('h3', { class: 'cme-empty__title' }, 'SOFRWatch data is unavailable'),
+      el('p', { class: 'cme-empty__text' }, 'The settlement scenarios could not be loaded. Try again in a few minutes.'),
+    ));
+    // eslint-disable-next-line no-console
+    console.error(e);
+  }
+}
