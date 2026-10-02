@@ -1,7 +1,8 @@
 /*
  * €STRWatch page model shared by the €STRWatch blocks: the data set (loaded once per page), the
  * user's scenario (a policy change in basis points for every upcoming ECB monetary policy
- * meeting) and the Three-Month €STR (ESR) settlements it implies, computed with the overnight
+ * meeting, applied from the maintenance-period start in the data) and the Three-Month €STR (ESR)
+ * settlements it implies, computed with the overnight
  * rate engine in ../sofrwatch/engine.js. Views subscribe and re-render on change.
  */
 import * as SW from '../sofrwatch/engine.js';

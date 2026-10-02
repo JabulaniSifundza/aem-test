@@ -66,7 +66,7 @@ function chartPanel(key, title, axis, legendItems, note) {
     <div class="cme-chart__header"><h3 class="cme-chart__title" id="ew-${key}-title">${esc(title)}</h3></div>
     <div class="cme-chart__canvas" data-ew-chart="${key}"></div>
     <div class="cme-chart__footer"><span class="cme-chart__axis-label">${esc(axis)}</span><ul class="cme-chart__legend" aria-label="Show or hide series">${toggles(legendItems)}</ul></div>
-    <figcaption class="cme-chart__note">${esc(note)}</figcaption>
+    ${note ? `<figcaption class="cme-chart__note">${esc(note)}</figcaption>` : ''}
   </figure>`;
 }
 
@@ -137,7 +137,8 @@ function renderHero(block, M, author) {
     const next = D.meetings.map((m) => m.date).find((iso) => decisionUtc(iso) > Date.now()) || null;
     if (next !== shownFor) {
       shownFor = next;
-      q(block, 'hero-when').textContent = next ? `${fmtLong(next)} · 14:15 CET` : 'No meetings scheduled in this data';
+      const zone = new Date(decisionUtc(next || '2000-01-01')).getUTCHours() === 12 ? 'CEST' : 'CET';
+      q(block, 'hero-when').textContent = next ? `${fmtLong(next)} · 14:15 ${zone}` : 'No meetings scheduled in this data';
       if (next) q(block, 'hero-timer').setAttribute('aria-label', `Time until the ECB decision on ${fmtLong(next)} at 14:15 Frankfurt time`);
     }
     const ms = next ? Math.max(0, decisionUtc(next) - Date.now()) : 0;
@@ -163,7 +164,7 @@ function curveChart(c, rows, label, longName) {
     xs: rows.map((_, i) => i),
     xPad: 12,
     xTicks: rows.map((r, i) => ({ x: i, text: shortCode(r.code) })),
-    xLabel: (i) => `${rows[i].code} (${longName(rows[i]).replace(/\u00a0/g, ' ')}) · settles ${price(rows[i].implied)} vs market ${rows[i].market === undefined ? '—' : price(rows[i].market)}`,
+    xLabel: (i) => `${rows[i].code} · ${longName(rows[i]).replace(/\u00a0/g, ' ')}`,
     series: [
       {
         name: 'Your scenario', color: seriesColor(1), markers: true, values: rows.map((r) => r.impliedRate),
@@ -192,8 +193,11 @@ function scenarioSummary(M) {
 }
 
 // ---------- scenario: inputs on the left, everything they change on the right ----------
-function renderScenario(block, M) {
+function renderScenario(block, M, author) {
   const { D } = M;
+  // the section heading is part of the block so the tool sits right under it (one screen)
+  const title = text(author.get('title'));
+  const intro = text(author.get('intro'));
   const field = (m, i) => `<div class="cme-col-md-3">
       <div class="cme-field">
         <label class="cme-field__label" for="ew-m-${m.date}">${nbsp(fmtD(m.date))}</label>
@@ -203,6 +207,8 @@ function renderScenario(block, M) {
       </div>
     </div>`;
   block.innerHTML = `
+    ${title ? `<h2 class="cme-mb-xs" id="ew-scenario-title">${esc(title)}</h2>` : ''}
+    ${intro ? `<p class="cme-small">${esc(intro)}</p>` : ''}
     <div class="cme-row cme-row--wide" data-cme-gap="scenario-workspace" data-cme-gap-note="Inputs and the results they change sit side by side (7/5) so every edit is visible without scrolling at desktop widths; below 769px the results follow the inputs directly.">
       <div class="cme-col-md-7">
         <div class="cme-toolbar">
@@ -228,10 +234,10 @@ function renderScenario(block, M) {
           <button class="cme-tabs__tab" role="tab" aria-selected="false" aria-controls="ew-live-path" id="ew-tab-live-path" type="button">Overnight €STR</button>
         </div>
         <div role="tabpanel" id="ew-live-esr" aria-labelledby="ew-tab-live-esr" class="cme-mt-s">
-          ${chartPanel('curve', 'Three-month €STR settlements', 'Contract', CURVE_LEGEND, 'Implied rate = 100 minus the settlement price. Hover over or focus the chart for prices; every contract is in the table below.')}
+          ${chartPanel('curve', 'Three-month €STR settlements', 'Contract', CURVE_LEGEND, '')}
         </div>
         <div role="tabpanel" id="ew-live-path" aria-labelledby="ew-tab-live-path" class="cme-mt-s" hidden>
-          ${chartPanel('path', 'Overnight €STR: actual and implied', 'Date', PATH_LEGEND, 'Implied paths hold the spread to the deposit facility rate constant; a decision applies from the next reserve maintenance period.')}
+          ${chartPanel('path', 'Overnight €STR: actual and implied', 'Date', PATH_LEGEND, '')}
         </div>
       </div>
     </div>`;
@@ -245,6 +251,8 @@ function renderScenario(block, M) {
   if (!days.includes(D.asOf)) days.push(D.asOf);
   days.sort();
 
+  const section = block.closest('.section');
+  if (section && title) section.setAttribute('aria-labelledby', 'ew-scenario-title');
   const inputs = [...block.querySelectorAll('input[type="number"]')];
   const sync = () => {
     const { esr, user, market } = M.results;
@@ -256,7 +264,7 @@ function renderScenario(block, M) {
     let { dfr } = D;
     D.meetings.forEach((m, i) => {
       dfr += M.scenario[i] / 100;
-      q(block, `hint-${i}`).textContent = `DFR ${dfr.toFixed(2)}% from ${shortDate(m.effective)}`;
+      q(block, `hint-${i}`).textContent = `DFR ${dfr.toFixed(2)}%, ${shortDate(m.effective)}`;
       if (document.activeElement !== inputs[i]) inputs[i].value = String(M.scenario[i]);
     });
     const gap = largestGap(esr);
@@ -312,6 +320,14 @@ function renderScenario(block, M) {
     clearTimeout(timer);
     timer = setTimeout(read, 150);
   });
+  // arrow keys step a whole 25 bp move (the field still accepts any value, e.g. 12.5)
+  block.querySelector('form').addEventListener('keydown', (e) => {
+    if (!['ArrowUp', 'ArrowDown'].includes(e.key) || !e.target.matches('input[type="number"]')) return;
+    e.preventDefault();
+    const v = Number(e.target.value) || 0;
+    e.target.value = String(v + (e.key === 'ArrowUp' ? 25 : -25));
+    e.target.dispatchEvent(new Event('input', { bubbles: true }));
+  });
   block.querySelector('form').addEventListener('submit', (e) => e.preventDefault());
 }
 
@@ -345,7 +361,7 @@ function renderResults(block, M) {
         <div class="cme-spec">
           <div class="cme-spec__header"><h3 class="cme-spec__title">Starting point</h3></div>
           <ul class="cme-spec__list">${spec.map(([l, v, unit]) => `<li><h4 class="cme-spec__label">${l}</h4><p class="cme-spec__value"><span class="cme-data-md">${esc(v)}</span>${unit ? ` ${esc(unit)}` : ''}</p></li>`).join('')}</ul>
-          <p class="cme-spec__updated">A decision applies from the start of the next reserve maintenance period, the Wednesday after the meeting. ${esc(asOfText(M))}.</p>
+          <p class="cme-spec__updated">A decision applies from the start of the next reserve maintenance period, usually the Wednesday after the meeting. ${esc(asOfText(M))}.</p>
         </div>
       </div>
     </div>`;
