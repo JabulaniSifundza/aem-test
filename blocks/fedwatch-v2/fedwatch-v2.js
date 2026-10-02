@@ -98,10 +98,14 @@ function renderHero(block, M, author) {
         },
         el('p', { class: 'cme-overline', 'data-fw': 'hero-when' }),
         el(
-          'ul',
-          { class: 'cme-facts cme-facts--boxed', role: 'timer', 'data-fw': 'hero-timer' },
-          unit('Days', 'cd-d'),
-          unit('Hours : minutes : seconds', 'cd-hms'),
+          'div',
+          { role: 'timer', 'data-fw': 'hero-timer' },
+          el(
+            'ul',
+            { class: 'cme-facts cme-facts--boxed' },
+            unit('Days', 'cd-d'),
+            unit('Hours : minutes : seconds', 'cd-hms'),
+          ),
         ),
         el('p', { class: 'cme-fine cme-mt-s cme-mb-0' }, [M.asOfText, ...notes].join(' · ')),
       ),
@@ -110,6 +114,7 @@ function renderHero(block, M, author) {
   const section = block.closest('.section');
   if (section) {
     section.classList.add('cme-section--inverse', 'cme-inverse', 'cme-hero');
+    section.setAttribute('role', 'region');
     section.setAttribute('aria-labelledby', 'fw-page-title');
   }
 
@@ -144,11 +149,11 @@ function renderHero(block, M, author) {
 
 // ---------- tool: dates → information and probabilities → charts ----------
 function meetingPanel(M, iso) {
-  const { CUR, NOW } = M;
+  const { CUR } = M;
   const r = M.res.now.get(iso);
   const [y, m] = parts(iso);
   const i = M.upcoming.indexOf(iso);
-  const days = Math.round((utc(iso) - utc(NOW.asOf)) / 864e5);
+  const days = Math.ceil((decisionUtc(iso) - Date.now()) / 864e5);
   const split = FW.outcomeSplit(r.dist, CUR);
   const facts = [
     [pct(split.cut), 'Cut'], [pct(split.hold), 'No change'], [pct(split.hike), 'Hike'],
@@ -160,7 +165,7 @@ function meetingPanel(M, iso) {
     ['Futures price', r.zq.price.toFixed(4)],
     ['Implied average rate', rate(r.zq.avg, 3), `for ${MONTH[m - 1]}`],
     ['Implied change at meeting', signed(r.expectedChange * 100), 'bps'],
-    ['Days to meeting', String(days), `from ${fmtDate(NOW.asOf)}`],
+    ['Days to decision', days > 0 ? String(days) : 'Decided', days > 0 ? 'from today' : ''],
   ];
   const byS = SNAPS.map((k) => M.res[k].get(iso) || null);
   const ranges = rangesFor(byS, [CUR]);
@@ -208,10 +213,18 @@ function renderTool(block, M) {
     </div>
     ${M.upcoming.map((iso) => meetingPanel(M, iso)).join('')}
     <h3 class="cme-mt-l" data-fw="viz-title"></h3>
-    <div class="cme-tabs" role="tablist" aria-label="Chart views">
-      <button class="cme-tabs__tab is-active" role="tab" aria-selected="true" aria-controls="fw2-view-current" id="fw2-tab-current" type="button">Current</button>
-      <button class="cme-tabs__tab" role="tab" aria-selected="false" aria-controls="fw2-view-compare" id="fw2-tab-compare" type="button">Compare</button>
-      <button class="cme-tabs__tab" role="tab" aria-selected="false" aria-controls="fw2-view-history" id="fw2-tab-history" type="button">History</button>
+    <div class="cme-toolbar" data-cme-gap="tabs-with-action" data-cme-gap-note="Chart view tabs with a meeting picker on the same line (so the meeting can be changed without scrolling back to the date tabs); used the result toolbar layout.">
+      <div class="cme-tabs" role="tablist" aria-label="Chart views">
+        <button class="cme-tabs__tab is-active" role="tab" aria-selected="true" aria-controls="fw2-view-current" id="fw2-tab-current" type="button">Current</button>
+        <button class="cme-tabs__tab" role="tab" aria-selected="false" aria-controls="fw2-view-compare" id="fw2-tab-compare" type="button">Compare</button>
+        <button class="cme-tabs__tab" role="tab" aria-selected="false" aria-controls="fw2-view-history" id="fw2-tab-history" type="button">History</button>
+      </div>
+      <div class="cme-dropdown">
+        <button class="cme-dropdown__trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="fw2-chart-meeting" data-fw="chart-meeting"></button>
+        <div class="cme-dropdown__menu" id="fw2-chart-meeting" role="menu" hidden>
+          ${M.upcoming.map((iso) => `<button class="cme-dropdown__item" role="menuitemradio" aria-checked="false" type="button" data-value="${iso}" data-cme-select="Meeting: ${fmtDate(iso)}">${fmtDate(iso)}${M.sep.has(iso) ? ' · projections' : ''}</button>`).join('')}
+        </div>
+      </div>
     </div>
     <div role="tabpanel" id="fw2-view-current" aria-labelledby="fw2-tab-current" class="cme-mt-m">
       ${chartPanel('current', '', { axis: 'Target rate (bps)' }, `${M.asOfText}. Hover over or focus a bar to read its value.`)}
@@ -234,6 +247,8 @@ function renderTool(block, M) {
     const name = fmtDate(meeting);
     const catOf = (lower) => ({ text: rangeText(lower), sub: Math.abs(lower - CUR) < 1e-9 ? 'Current' : '' });
     q(block, 'viz-title').textContent = `Charts for the ${name} meeting`;
+    q(block, 'chart-meeting').textContent = `Meeting: ${name}`;
+    block.querySelectorAll('#fw2-chart-meeting [data-value]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.value === meeting)));
     q(block, 'current-title').textContent = `Target rate probabilities for ${name}`;
     q(block, 'compare-title').textContent = `How expectations moved for ${name}`;
     q(block, 'history-title').textContent = `Probability history for ${name}`;
@@ -450,6 +465,9 @@ function wire(M) {
     const { detail } = e;
     if (!detail) return;
     if (detail.type === 'tab' && /^fw2-t-/.test(detail.id)) select(detail.id.slice(6));
+    if (detail.type === 'select' && e.target.querySelector?.('#fw2-chart-meeting')) {
+      document.getElementById(`fw2-t-${detail.value}`)?.click(); // the date tabs stay the one source
+    }
     if (detail.type === 'tab') requestAnimationFrame(redrawAll);
     if (detail.type === 'legend') {
       const canvas = e.target.closest('.cme-chart')?.querySelector('[data-fw-chart]');
@@ -461,7 +479,13 @@ function wire(M) {
   });
   document.addEventListener('click', (e) => {
     const link = e.target.closest('[data-fw-meeting]');
-    if (link) document.getElementById(`fw2-t-${link.getAttribute('data-fw-meeting')}`)?.click();
+    const tab = link && document.getElementById(`fw2-t-${link.getAttribute('data-fw-meeting')}`);
+    if (tab) {
+      e.preventDefault();
+      tab.click();
+      tab.scrollIntoView({ block: 'start', inline: 'nearest' });
+      tab.focus({ preventScroll: true });
+    }
     const dl = e.target.closest('[data-fw-download]');
     if (dl) {
       const which = dl.getAttribute('data-fw-download');

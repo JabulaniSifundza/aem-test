@@ -117,6 +117,7 @@
    4. TABS  (site: EDS .product-tabs = --page ; AEM .component.tabs = default)
    ========================================================= */
 .cme-tabs { position: relative; display: flex; gap: 0; overflow-x: auto; scrollbar-width: none; background: var(--color-surface-page); }
+.cme-tabs__tab:focus-visible { outline-offset: -2px; } /* the bar scrolls sideways, which would clip an outside focus ring */
 .cme-tabs__tab { position: relative; flex: none; padding: 11px 21px 20px; background: none; border: 0; cursor: pointer; text-decoration: none;
   font: var(--type-tab-weight) var(--type-tab-size)/var(--type-tab-line) var(--type-tab-family); letter-spacing: var(--type-tab-tracking); text-transform: uppercase; color: var(--color-text-body); transition: color var(--duration-medium); }
 .cme-tabs__tab:hover { color: var(--color-text-link); text-decoration: none; }

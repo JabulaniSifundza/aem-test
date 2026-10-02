@@ -325,7 +325,7 @@ export function lineChart(canvas, opts) {
     x: fr.x0, y: fr.y0, width: fr.x1 - fr.x0, height: fr.y1 - fr.y0, fill: 'transparent',
   }, fr.svg);
   let idx = opts.xs.length - 1;
-  const show = (i) => {
+  const show = (i, fromKeys = false) => {
     idx = i;
     cross.replaceChildren();
     const cx = x(opts.xs[i]);
@@ -345,7 +345,7 @@ export function lineChart(canvas, opts) {
       }, cross);
     });
     showTip(fr, tipLayer, cx, anchorY, opts.xLabel(i), rows);
-    if (live) live.textContent = `${opts.xLabel(i)}: ${rows.map((r) => `${r.label} ${r.value}`).join(', ')}`;
+    if (live && fromKeys) live.textContent = `${opts.xLabel(i)}: ${rows.map((r) => `${r.label} ${r.value}`).join(', ')}`;
   };
   const hide = () => { cross.replaceChildren(); tipLayer.replaceChildren(); };
   const nearest = (evt) => {
@@ -361,7 +361,7 @@ export function lineChart(canvas, opts) {
   hit.addEventListener('pointerdown', (e) => show(nearest(e)));
   hit.addEventListener('pointerleave', hide);
   fr.svg.setAttribute('tabindex', '0');
-  fr.svg.addEventListener('focus', () => show(idx));
+  fr.svg.addEventListener('focus', () => show(idx, true));
   fr.svg.addEventListener('blur', hide);
   fr.svg.addEventListener('keydown', (e) => {
     const n = opts.xs.length;
@@ -370,7 +370,7 @@ export function lineChart(canvas, opts) {
     };
     if (!(e.key in moves)) return;
     e.preventDefault();
-    show(Math.min(n - 1, Math.max(0, moves[e.key])));
+    show(Math.min(n - 1, Math.max(0, moves[e.key])), true);
   });
 }
 

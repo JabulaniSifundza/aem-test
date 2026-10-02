@@ -236,6 +236,18 @@
       });
     }, { rootMargin: SPY_MARGIN });
     targets.forEach((t) => io.observe(t));
+    // above the first section (back at the top of the page) the first link is current again
+    const firstLink = links.find((a) => a.getAttribute('href') === `#${targets[0].id}`);
+    let queued = false;
+    window.addEventListener('scroll', () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        const above = targets[0].getBoundingClientRect().top > window.innerHeight * 0.45;
+        if (firstLink && above) markCurrent(nav, firstLink);
+      });
+    }, { passive: true });
   }
   document.addEventListener('click', (e) => {
     const a = e.target.closest('.cme-tabs--page a[href^="#"], .cme-jump-nav a[href^="#"]');
