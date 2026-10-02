@@ -295,7 +295,10 @@ export function lineChart(canvas, opts) {
       });
     }
     const last = s.values.map((v, i) => [v, i]).filter(([v]) => v !== null).pop();
-    if (last) ends.push({ s, y: y(last[0]), x: x(opts.xs[last[1]]) });
+    // a direct label sits at the right edge, so only lines that reach it get one
+    // (the legend names the rest)
+    const reachesEdge = last && last[1] === opts.xs.length - 1;
+    if (reachesEdge) ends.push({ s, y: y(last[0]), x: x(opts.xs[last[1]]) });
   });
   // direct labels at the line ends, nudged apart so they never overlap
   ends.sort((a, b) => a.y - b.y);

@@ -34,11 +34,12 @@ const bps = (x, dp = 1) => {
   const v = Math.abs(x) < 0.05 ? 0 : x;
   return `${v > 0 ? '+' : ''}${v.toFixed(dp)}`;
 };
-const moveText = (bp) => {
-  if (Math.abs(bp) < 0.05) return 'no change';
-  return `${bp > 0 ? 'a hike of' : 'a cut of'} ${Math.abs(bp)} bps`;
+const quarterText = (c) => {
+  const [ys, ms, ds] = parts(c.start);
+  const [ye, me, de] = parts(c.end);
+  const from = ys === ye ? `${ds} ${MON[ms - 1]}` : fmtD(c.start);
+  return `${nbsp(from)} – ${nbsp(`${de} ${MON[me - 1]} ${ye}`)}`;
 };
-const quarterText = (c) => `${nbsp(fmtD(c.start))} – ${nbsp(fmtD(c.end))}`;
 const monthText = (c) => { const [y, m] = parts(c.start); return `${MON[m - 1]} ${y}`; };
 const shortCode = (code) => code.slice(-2);
 const hiddenSeries = new WeakMap();
@@ -105,7 +106,7 @@ function renderHero(block, M, author) {
         { class: 'cme-col-md-6' },
         el('p', { class: 'cme-eyebrow cme-hero__eyebrow' }, 'Next FOMC decision'),
         el('h1', { class: 'cme-hero__title', id: 'sw-page-title' }, text(author.get('title')) || 'CME SOFRWatch'),
-        el('p', { class: 'cme-lead' }, `Overnight SOFR fixed at ${rate2(lastFix)} on ${fmtD(D.asOf)}. Set your view of each FOMC meeting and see where SOFR futures would settle.`),
+        el('p', { class: 'cme-lead' }, `Overnight SOFR fixed at ${rate2(lastFix)} on ${fmtD(D.asOf)}${D.sample ? ' (sample)' : ''}. Set your view of each FOMC meeting and see where SOFR futures would settle.`),
         cta ? el('a', { class: 'cme-link-bold', href: cta.getAttribute('href') }, icon('arrow-right'), el('span', { class: 'cme-link__text' }, text(cta))) : '',
       ),
       el(
@@ -207,8 +208,9 @@ function renderScenario(block, M) {
     let range = D.targetLower;
     D.meetings.forEach((m, i) => {
       range += M.scenario[i] / 100;
-      const fw = `FedWatch most likely: ${moveText(m.mostLikelyChangeBp)} (${(m.mostLikelyProb * 100).toFixed(1)}%)`;
-      q(block, `hint-${i}`).textContent = `Range after: ${range.toFixed(2)}–${(range + 0.25).toFixed(2)}% · ${fw}`;
+      const ml = m.mostLikelyLower;
+      const fw = `FedWatch most likely ${ml.toFixed(2)}–${(ml + 0.25).toFixed(2)}% (${Math.round(m.mostLikelyProb * 100)}%)`;
+      q(block, `hint-${i}`).textContent = `Yours ${range.toFixed(2)}–${(range + 0.25).toFixed(2)}% · ${fw}`;
       if (document.activeElement !== inputs[i]) inputs[i].value = String(M.scenario[i]);
     });
   };
@@ -229,6 +231,7 @@ function renderScenario(block, M) {
       return bad ? null : v;
     });
     if (valid) setScenario(M, values, null);
+    else q(block, 'summary').textContent = 'Fix the highlighted meeting to update the results.';
   };
   block.querySelector('form').addEventListener('input', () => {
     clearTimeout(timer);
@@ -244,13 +247,13 @@ function renderResults(block, M) {
     <ul class="cme-facts" data-sw="facts"></ul>
     <div class="cme-toolbar cme-mt-m" data-cme-gap="tabs-with-action" data-cme-gap-note="Content tabs with a download action on the same line; used the result toolbar layout to hold both.">
       <div class="cme-tabs" role="tablist" aria-label="Settlement tables">
-        <button class="cme-tabs__tab is-active" role="tab" aria-selected="true" aria-controls="sw-sr3" id="sw-tab-sr3" type="button">Three-month SOFR</button>
-        <button class="cme-tabs__tab" role="tab" aria-selected="false" aria-controls="sw-sr1" id="sw-tab-sr1" type="button">One-month SOFR</button>
+        <button class="cme-tabs__tab is-active" role="tab" aria-selected="true" aria-controls="sw-sr3" id="sw-tab-sr3" type="button">Three-month</button>
+        <button class="cme-tabs__tab" role="tab" aria-selected="false" aria-controls="sw-sr1" id="sw-tab-sr1" type="button">One-month</button>
       </div>
       <button class="cme-btn cme-btn--secondary" type="button" data-sw-download><span class="cme-icon cme-icon--download" aria-hidden="true"></span>Download results</button>
     </div>
     <div role="tabpanel" id="sw-sr3" aria-labelledby="sw-tab-sr3">
-      <div class="cme-table-wrap">
+      <div class="cme-table-wrap" role="region" aria-label="Three-Month SOFR table, scrolls sideways">
         <table class="cme-table">
           <caption class="cme-visually-hidden">Three-Month SOFR futures: market price and the settlement your scenario implies</caption>
           <thead><tr><th scope="col">Contract</th><th scope="col">Reference quarter</th><th scope="col">Market price</th><th scope="col">Your scenario</th><th scope="col">Difference (bps)</th><th scope="col">Implied rate</th></tr></thead>
@@ -259,7 +262,7 @@ function renderResults(block, M) {
       </div>
     </div>
     <div role="tabpanel" id="sw-sr1" aria-labelledby="sw-tab-sr1" hidden>
-      <div class="cme-table-wrap">
+      <div class="cme-table-wrap" role="region" aria-label="One-Month SOFR table, scrolls sideways">
         <table class="cme-table">
           <caption class="cme-visually-hidden">One-Month SOFR futures: market price and the settlement your scenario implies</caption>
           <thead><tr><th scope="col">Contract</th><th scope="col">Month</th><th scope="col">Market price</th><th scope="col">Your scenario</th><th scope="col">Difference (bps)</th><th scope="col">Implied rate</th></tr></thead>
@@ -274,7 +277,7 @@ function renderResults(block, M) {
       <button class="cme-tabs__tab" role="tab" aria-selected="false" aria-controls="sw-view-curve" id="sw-tab-curve" type="button">SR3 curve</button>
     </div>
     <div role="tabpanel" id="sw-view-path" aria-labelledby="sw-tab-path" class="cme-mt-m">
-      ${chartPanel('path', 'Overnight SOFR: actual fixings and implied path', 'Date', [[1, 'Actual fixings'], [2, 'Your scenario'], [3, 'Market (FedWatch expected)']], 'Implied paths hold the spread to the lower bound constant and change only after FOMC decisions. Select a series in the legend to show or hide it; focus the chart and use the arrow keys to read each week.')}
+      ${chartPanel('path', 'Overnight SOFR: actual fixings and implied path', 'Date', [[1, 'Actual fixings'], [2, 'Your scenario'], [4, 'FedWatch expected path']], 'Implied paths hold the spread to the lower bound constant and change only after FOMC decisions. Select a series in the legend to show or hide it; focus the chart and use the arrow keys to read each week.')}
     </div>
     <div role="tabpanel" id="sw-view-curve" aria-labelledby="sw-tab-curve" class="cme-mt-m" hidden>
       ${chartPanel('curve', 'Three-month SOFR curve: implied rates by contract', 'Contract', [[2, 'Your scenario'], [3, 'Market']], 'Implied rate = 100 minus the price. The values are in the Three-month SOFR table above. Select a series in the legend to show or hide it.')}
@@ -313,9 +316,14 @@ function renderResults(block, M) {
       [`${bps(gap.diffBp)}`, `Largest gap: ${gap.code}`, 'Basis points, your scenario minus market'],
     ];
     q(block, 'facts').innerHTML = facts.map(([v, l, note]) => `<li class="cme-fact"><span class="cme-fact__value">${esc(v)}</span><span class="cme-fact__label">${esc(l)}</span><span class="cme-fact__note">${esc(note)}</span></li>`).join('');
-    M.csv = [['Contract', 'Reference start', 'Reference end', 'Market price', 'Your scenario', 'Difference (bps)', 'Implied rate (%)']]
-      .concat([...sr3, ...sr1].map((r) => [r.code, r.start, r.end, r.market ?? '', r.implied.toFixed(4), r.diffBp === null ? '' : r.diffBp.toFixed(2), r.impliedRate.toFixed(4)]))
-      .map((x) => x.join(',')).join('\n');
+    const head = [
+      ['# CME SOFRWatch scenario export'],
+      [`# Data as of ${D.asOf}${D.sample ? ' - ILLUSTRATIVE SAMPLE DATA, not market data' : ''}`],
+      [`# Lower bound ${D.targetLower.toFixed(2)}%; EFFR - lower bound ${D.spreads.effrToLowerBp} bp; SOFR - EFFR ${D.spreads.sofrToEffrBp} bp (held constant)`],
+      [`# Scenario (bp per FOMC meeting): ${D.meetings.map((m, i) => `${m.date} ${M.scenario[i]}`).join('; ')}`],
+    ];
+    M.csv = head.concat([['Contract', 'Reference start', 'Reference end', 'Market price', 'Your scenario', 'Difference (bps)', 'Implied rate (%)']]
+      .concat([...sr3, ...sr1].map((r) => [r.code, r.start, r.end, r.market ?? '', r.implied.toFixed(4), r.diffBp === null ? '' : r.diffBp.toFixed(2), r.impliedRate.toFixed(4)]))).map((x) => x.join(',')).join('\n');
 
     register(block.querySelector('[data-sw-chart="path"]'), (c) => {
       const hidden = hiddenOf(c);
@@ -323,14 +331,14 @@ function renderResults(block, M) {
       const ticks = days.filter((d) => d.slice(8) <= '07' && ['01', '04', '07', '10'].includes(d.slice(5, 7)))
         .map((d) => { const [y, m] = parts(d); return { x: toUtc(d), text: `${MON[m - 1]} ’${String(y).slice(2)}` }; });
       lineChart(c, {
-        label: 'Line chart: overnight SOFR actual fixings, the path your scenario implies and the market path. Focus the chart and use the arrow keys to read each week.',
+        label: 'Line chart: overnight SOFR actual fixings, the path your scenario implies and FedWatch’s expected path. Focus the chart and use the arrow keys to read each week.',
         xs,
         xTicks: ticks,
         xLabel: (i) => `Week of ${fmtD(days[i])}`,
         series: [
           { name: 'Actual fixings', color: seriesColor(0), values: days.map((d) => (d <= D.asOf ? user(d) : null)) },
           { name: 'Your scenario', color: seriesColor(1), values: days.map((d) => (d >= D.asOf ? user(d) : null)) },
-          { name: 'Market (FedWatch expected)', color: seriesColor(2), values: days.map((d) => (d >= D.asOf ? market(d) : null)) },
+          { name: 'FedWatch expected path', color: seriesColor(3), values: days.map((d) => (d >= D.asOf ? market(d) : null)) },
         ].map((s) => ({ ...s, hidden: hidden.has(s.name) })),
         yFmt: (v) => rate2(v, 3),
         yTickFmt: (v) => `${v.toFixed(2)}%`,

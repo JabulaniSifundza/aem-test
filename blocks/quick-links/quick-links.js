@@ -19,4 +19,6 @@ export default function decorate(block) {
     return;
   }
   block.replaceChildren(...[title ? el('h6', {}, title) : null, list].filter(Boolean));
+  // after another block (e.g. steps) the links start a new group, not a caption of the block above
+  if (block.parentElement?.previousElementSibling?.querySelector('.block')) block.classList.add('cme-mt-l');
 }
