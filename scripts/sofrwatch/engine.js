@@ -12,6 +12,9 @@
  * SOFR is published for business days; a non-business day uses the previous business day's
  * rate (calendar-day compounding / averaging). Weekends are modelled; exchange and US
  * government securities market holidays are not.
+ * The same mechanics serve €STRWatch (Three-Month €STR futures, ESR): there the spread is to the
+ * ECB deposit facility rate and a change applies from the start of the next reserve maintenance
+ * period (pass `effective` on each move).
  * Pure functions, no DOM.
  */
 
@@ -39,10 +42,11 @@ const MONTH_CODE = 'FGHJKMNQUVXZ';
 export const contractCode = (root, y, m) => `${root}${MONTH_CODE[m - 1]}${y % 10}`;
 
 /**
- * SR3 contracts whose reference quarter ends after `asOf`, in order.
+ * Quarterly IMM contracts (SR3 by default; ESR for Three-Month €STR) whose reference quarter
+ * ends after `asOf`, in order.
  * @returns {Array<{code, year, month, start, end}>} start inclusive, end exclusive
  */
-export function sr3Contracts(asOf, count) {
+export function sr3Contracts(asOf, count, root = 'SR3') {
   const out = [];
   let [y] = asOf.split('-').map(Number);
   y -= 1;
@@ -54,7 +58,7 @@ export function sr3Contracts(asOf, count) {
       const end = m === 12 ? imm(year + 1, 3) : imm(year, m + 3);
       if (end > asOf) {
         out.push({
-          code: contractCode('SR3', year, m), year, month: m, start, end,
+          code: contractCode(root, year, m), year, month: m, start, end,
         });
       }
     });
@@ -89,14 +93,15 @@ export function sr1Contracts(asOf, count) {
  * @param {Object<string, number>} p.fixings actual O/N SOFR by business day 'YYYY-MM-DD'
  * @param {number} p.lower lower bound of the target range at `asOf` (%)
  * @param {number} p.spread (EFFR - lower bound) + (SOFR - EFFR), in % (held constant)
- * @param {Array<{date: string, change: number}>} p.moves policy changes in basis points
+ * @param {Array<{date: string, change: number, effective?: string}>} p.moves policy changes in
+ *   basis points; a change applies from `effective` (default: the day after `date`)
  * @returns {(iso: string) => number} rate for any calendar day
  */
 export function sofrPath({
   asOf, fixings, lower, spread, moves,
 }) {
   const steps = moves.filter((mv) => mv.date >= asOf)
-    .map((mv) => ({ from: addDays(mv.date, 1), change: mv.change / 100 }))
+    .map((mv) => ({ from: mv.effective || addDays(mv.date, 1), change: mv.change / 100 }))
     .sort((a, b) => (a.from < b.from ? -1 : 1));
   const implied = (iso) => steps.reduce(
     (r, s) => (iso >= s.from ? r + s.change : r),
