@@ -7,6 +7,17 @@
  * Every session must authenticate first ({ action: "auth", token }) and can re-authenticate with
  * a fresh token at any time without reconnecting (SEC-1, SEC-2). A session whose token expires
  * is closed.
+ *
+ * Flow of one tick(now):
+ *   1. gateway.step(now): orders match against the trades since the last tick; the gateway's
+ *      events (order, position, execution, equity) go straight to that user's trade sessions.
+ *   2. Sessions with no auth after AUTH_TIMEOUT_MS, or an expired token, are closed.
+ *   3. For each symbol someone watches: new ticks to bar subscribers, a quote to quote
+ *      subscribers, and the change in the 25-level book to depth subscribers.
+ *
+ * Complexity per tick (S sessions, Y symbols watched, k new ticks, L depth levels):
+ *   O(S·Y + Σ ticks·subscribers + Y·L). Gateway events go to the user's own sessions only:
+ *   O(that user's sessions), via the byUser index, not a scan of every session.
  */
 import { ACTIONS, DEPTH_LEVELS } from '../shared/protocol.js';
 import { getSymbol } from '../shared/symbols.js';
@@ -32,6 +43,8 @@ const AUTH_TIMEOUT_MS = 10_000;
  * @property {Set<string>} depth
  */
 
+/** @typedef {Set<Session>} SessionSet */
+
 /**
  * @param {object} deps
  * @param {import('../engine/market.js').Market} deps.market
@@ -44,6 +57,8 @@ const AUTH_TIMEOUT_MS = 10_000;
 export function createHub({ market, gateway, router, verify, now, realNow = () => Date.now() }) {
   /** @type {Set<Session>} */
   const sessions = new Set();
+  /** Authenticated trade-stream sessions by user, for gateway events. @type {Map<string, SessionSet>} */
+  const tradeByUser = new Map();
   /** @type {Map<string, number>} symbol → time of the last tick pushed */
   const lastPushed = new Map();
   /** @type {Map<string, { bids: Map<number, number>, asks: Map<number, number> }>} last book sent per symbol */
@@ -51,15 +66,31 @@ export function createHub({ market, gateway, router, verify, now, realNow = () =
 
   gateway.subscribe((event) => {
     const { user, ...frame } = event;
-    for (const s of sessions) if (s.service === 'trade' && s.user === user) s.send(frame);
+    for (const s of tradeByUser.get(user) ?? []) s.send(frame);
   });
+
+  /** @param {Session} s */
+  function indexSession(s) {
+    if (s.service !== 'trade' || !s.user) return;
+    let set = tradeByUser.get(s.user);
+    if (!set) { set = new Set(); tradeByUser.set(s.user, set); }
+    set.add(s);
+  }
+
+  /** Forget a session everywhere. @param {Session} s */
+  function drop(s) {
+    const set = s.user ? tradeByUser.get(s.user) : undefined;
+    if (set?.delete(s) && set.size === 0) tradeByUser.delete(/** @type {string} */ (s.user));
+    return sessions.delete(s);
+  }
 
   /** @param {Session} s @param {string} message @param {string} [code] */
   const error = (s, message, code = 'bad_request') => s.send({ type: 'error', code, message });
 
   /**
    * The book for a symbol as a full snapshot, or as changes since the last push to everyone.
-   * Snapshots for new subscribers don't move the shared "last pushed" book.
+   * Snapshots for new subscribers don't move the shared "last pushed" book. The diff is O(L):
+   * levels whose size changed, plus removed levels sent with size "0".
    * @param {string} symbol @param {boolean} snapshot
    */
   function bookFrame(symbol, snapshot) {
@@ -85,7 +116,10 @@ export function createHub({ market, gateway, router, verify, now, realNow = () =
     return { full: null, delta: { type: 'l2', symbol, isSnapshot: false, asks: diff(asks, prev.asks), bids: diff(bids, prev.bids) } };
   }
 
-  /** @param {Session} s @param {any} frame */
+  /**
+   * One frame from a client: ping, auth, then subscriptions for the session's stream.
+   * @param {Session} s @param {any} frame
+   */
   function receive(s, frame) {
     if (!frame || typeof frame !== 'object' || typeof frame.action !== 'string') return error(s, 'Frames must be JSON objects with an action');
     const t = now();
@@ -96,6 +130,7 @@ export function createHub({ market, gateway, router, verify, now, realNow = () =
       if (s.user && s.user !== id.user) { error(s, 'A session cannot change user', 'unauthorized'); return s.close(); }
       s.user = id.user;
       s.expiresAt = id.expiresAt;
+      indexSession(s);
       return s.send({ type: 'auth_ok', user: id.user, expiresAt: id.expiresAt });
     }
     if (!s.user) return error(s, 'Authenticate first: { "action": "auth", "token": "…" }', 'unauthorized');
@@ -198,6 +233,7 @@ export function createHub({ market, gateway, router, verify, now, realNow = () =
       if (!delta || (!delta.asks.length && !delta.bids.length)) continue;
       for (const s of sessions) if (s.service === 'trade' && s.user && s.depth.has(name)) s.send(delta);
     }
+    // Forget symbols nobody watches any more, so a later subscriber starts from "now".
     for (const name of [...lastPushed.keys()]) if (!marketSymbols.has(name)) lastPushed.delete(name);
     for (const name of [...lastBook.keys()]) if (!depthSymbols.has(name)) lastBook.delete(name);
   }
@@ -210,13 +246,13 @@ export function createHub({ market, gateway, router, verify, now, realNow = () =
     connect(service, send, close) {
       /** @type {Session} */
       const s = { service, send, user: null, expiresAt: 0, openedAt: realNow(), bars: new Map(), quotes: new Set(), depth: new Set(), close: () => {} };
-      s.close = () => { if (sessions.delete(s)) close(); };
+      s.close = () => { if (drop(s)) close(); };
       sessions.add(s);
       return {
         /** @param {unknown} frame */
         receive: (frame) => { if (sessions.has(s)) receive(s, frame); },
         /** Call when the connection closes from the other side. */
-        disconnect: () => { sessions.delete(s); },
+        disconnect: () => { drop(s); },
       };
     },
     tick,

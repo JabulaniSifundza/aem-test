@@ -2,6 +2,9 @@
  * Canvas renderers for the uPlot chart: price bars in each chart type, volume, the volume profile,
  * trading lines, the last-price tag and execution marks. Each takes the uPlot instance (for its
  * context, plot box and scales) and plain data, and draws inside the plot box only.
+ *
+ * Everything works on the visible index range only (visibleIndices), so drawing cost follows
+ * what is on screen, not how much history is loaded. Coordinates are canvas pixels (CSS × DPR).
  */
 
 /** @typedef {import('../../../vendor/uplot.js').default} UPlot */
@@ -42,6 +45,11 @@ const crisp = (v) => Math.round(v) + 0.5;
 
 /**
  * Price bars as candles, hollow candles or OHLC bars. Line and area types are uPlot series.
+ *
+ * Bars are drawn in two batches, rising then falling: one path for all the wicks (or OHLC
+ * strokes) of a colour, one for all its filled bodies, one for its hollow bodies. That is about
+ * six canvas calls per frame instead of three per bar; style changes and stroke/fill calls are
+ * what cost on a canvas, not the path segments. O(v) for v visible bars.
  * @param {UPlot} u @param {Bar[]} bars @param {ChartType} type @param {Palette} pal
  */
 export function drawBars(u, bars, type, pal) {
@@ -49,42 +57,46 @@ export function drawBars(u, bars, type, pal) {
   const { ctx } = u;
   const [a, b] = visibleIndices(u, bars.length);
   const space = barSpacing(u);
+  // An odd body width keeps the wick centred on whole pixels.
   const body = Math.max(1, Math.round(space * 0.7) - (Math.round(space * 0.7) % 2 === 0 ? 1 : 0));
+  const tick = Math.max(2, Math.round(space * 0.35));
   const pxr = devicePixelRatio || 1;
   clipped(u, () => {
     ctx.lineWidth = Math.max(1, Math.round(pxr));
-    for (let i = a; i <= b; i += 1) {
-      const bar = bars[i];
-      const up = bar.close >= bar.open;
-      const color = up ? pal.up : pal.down;
-      const x = crisp(u.valToPos(i, 'x', true));
-      const yo = u.valToPos(bar.open, 'y', true), yc = u.valToPos(bar.close, 'y', true);
-      const yh = u.valToPos(bar.high, 'y', true), yl = u.valToPos(bar.low, 'y', true);
+    for (const rising of [true, false]) {
+      const color = rising ? pal.up : pal.down;
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
-      if (type === 'bars') {
-        const tick = Math.max(2, Math.round(space * 0.35));
-        ctx.beginPath();
-        ctx.moveTo(x, yh); ctx.lineTo(x, yl);
-        ctx.moveTo(x - tick, crisp(yo)); ctx.lineTo(x, crisp(yo));
-        ctx.moveTo(x, crisp(yc)); ctx.lineTo(x + tick, crisp(yc));
-        ctx.stroke();
-        continue;
+      const strokes = new Path2D();   // wicks, OHLC ticks, hollow outlines
+      const fills = new Path2D();     // solid bodies
+      for (let i = a; i <= b; i += 1) {
+        const bar = bars[i];
+        if ((bar.close >= bar.open) !== rising) continue;
+        const x = crisp(u.valToPos(i, 'x', true));
+        const yo = u.valToPos(bar.open, 'y', true), yc = u.valToPos(bar.close, 'y', true);
+        const yh = u.valToPos(bar.high, 'y', true), yl = u.valToPos(bar.low, 'y', true);
+        if (type === 'bars') {
+          strokes.moveTo(x, yh); strokes.lineTo(x, yl);
+          strokes.moveTo(x - tick, crisp(yo)); strokes.lineTo(x, crisp(yo));
+          strokes.moveTo(x, crisp(yc)); strokes.lineTo(x + tick, crisp(yc));
+          continue;
+        }
+        const top = Math.min(yo, yc), height = Math.max(1, Math.abs(yc - yo));
+        strokes.moveTo(x, yh); strokes.lineTo(x, top);
+        strokes.moveTo(x, top + height); strokes.lineTo(x, yl);
+        const left = Math.round(x - body / 2);
+        if (type === 'hollow' && rising && body > 2) strokes.rect(left + 0.5, Math.round(top) + 0.5, body - 1, Math.max(1, Math.round(height) - 1));
+        else fills.rect(left, Math.round(top), body, Math.max(1, Math.round(height)));
       }
-      const top = Math.min(yo, yc), height = Math.max(1, Math.abs(yc - yo));
-      ctx.beginPath();
-      ctx.moveTo(x, yh); ctx.lineTo(x, top);
-      ctx.moveTo(x, top + height); ctx.lineTo(x, yl);
-      ctx.stroke();
-      const left = Math.round(x - body / 2);
-      if (type === 'hollow' && up && body > 2) ctx.strokeRect(left + 0.5, Math.round(top) + 0.5, body - 1, Math.max(1, Math.round(height) - 1));
-      else ctx.fillRect(left, Math.round(top), body, Math.max(1, Math.round(height)));
+      ctx.stroke(strokes);
+      ctx.fill(fills);
     }
   });
 }
 
 /**
- * Volume columns along the bottom fifth of the plot, scaled to the visible maximum.
+ * Volume columns along the bottom fifth of the plot, scaled to the visible maximum. Two batched
+ * fills (rising and falling bars). O(v).
  * @param {UPlot} u @param {Bar[]} bars @param {Palette} pal
  */
 export function drawVolume(u, bars, pal) {
@@ -97,11 +109,16 @@ export function drawVolume(u, bars, pal) {
   const h = bbox.height * 0.18, base = bbox.top + bbox.height;
   const width = Math.max(1, Math.round(barSpacing(u) * 0.7));
   clipped(u, () => {
-    for (let i = a; i <= b; i += 1) {
-      const bar = bars[i];
-      const vh = Math.max(1, Math.round((bar.volume / max) * h));
-      ctx.fillStyle = bar.close >= bar.open ? pal.volUp : pal.volDown;
-      ctx.fillRect(Math.round(u.valToPos(i, 'x', true) - width / 2), base - vh, width, vh);
+    for (const rising of [true, false]) {
+      const columns = new Path2D();
+      for (let i = a; i <= b; i += 1) {
+        const bar = bars[i];
+        if ((bar.close >= bar.open) !== rising) continue;
+        const vh = Math.max(1, Math.round((bar.volume / max) * h));
+        columns.rect(Math.round(u.valToPos(i, 'x', true) - width / 2), base - vh, width, vh);
+      }
+      ctx.fillStyle = rising ? pal.volUp : pal.volDown;
+      ctx.fill(columns);
     }
   });
 }

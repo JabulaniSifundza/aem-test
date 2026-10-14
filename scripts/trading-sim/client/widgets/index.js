@@ -24,25 +24,29 @@ export function widgetDefs(ctx) {
 }
 
 /**
- * The side menu: sections and the widgets in each, with their menu labels.
- * @type {Array<{ title: string, items: Array<{ kind: string, label: string, params?: Record<string, any> }> }>}
+ * The side menu: sections and the widgets in each, with their labels, in the simulator's order
+ * (its widgets first, then the ones this rewrite adds). `picker` items open the product picker
+ * first (client/ui/sheet.js), as the simulator's Chart and Price Ladder do; the picker's titles
+ * are the simulator's.
+ * @typedef {{ title: string, intro: string, add: string }} Picker
+ * @type {Array<{ title: string, items: Array<{ kind: string, label: string, params?: Record<string, any>, picker?: Picker }> }>}
  */
 export const MENU = [
   {
     title: 'Add widgets',
     items: [
-      { kind: 'markets', label: 'Markets' }, { kind: 'watchlist', label: 'Watchlists' }, { kind: 'chart', label: 'Chart' },
-      { kind: 'ladder', label: 'Price ladder' }, { kind: 'ticket', label: 'Trade' }, { kind: 'options', label: 'Options' },
-      { kind: 'positions', label: 'Positions' }, { kind: 'orders', label: 'Orders' }, { kind: 'executions', label: 'Executions' },
-      { kind: 'details', label: 'Symbol details' }, { kind: 'data-window', label: 'Data window' }, { kind: 'news', label: 'News' },
-      { kind: 'calendar', label: 'Calendar' }, { kind: 'commentary', label: 'Commentary' }, { kind: 'cme-news', label: 'CME news' },
+      { kind: 'markets', label: 'Markets' }, { kind: 'watchlist', label: 'Watchlists' },
+      { kind: 'chart', label: 'Chart', picker: { title: 'New chart', intro: 'Please select a product in order to add a chart.', add: 'Add chart' } },
+      { kind: 'ladder', label: 'Price Ladder', picker: { title: 'New price ladder', intro: 'Please select a product in order to add a price ladder.', add: 'Add price ladder' } },
+      { kind: 'options', label: 'Options' }, { kind: 'positions', label: 'Positions' }, { kind: 'orders', label: 'Orders' },
+      { kind: 'commentary', label: 'Commentary' }, { kind: 'calendar', label: 'Calendar' }, { kind: 'news', label: 'News' },
+      { kind: 'ticket', label: 'Trade' }, { kind: 'executions', label: 'Executions' }, { kind: 'details', label: 'Symbol details' },
+      { kind: 'data-window', label: 'Data window' }, { kind: 'cme-news', label: 'CME news' },
     ],
   },
+  { title: 'Challenge', items: [{ kind: 'discover', label: 'Discover' }] },
   {
-    title: 'Challenge & resources',
-    items: [
-      { kind: 'discover', label: 'Discover' }, { kind: 'education', label: 'Education' },
-      { kind: 'trade-plan', label: 'Trade plan' }, { kind: 'trade-log', label: 'Trade log' },
-    ],
+    title: 'Resources',
+    items: [{ kind: 'education', label: 'Education' }, { kind: 'trade-plan', label: 'Trade Plan' }, { kind: 'trade-log', label: 'Trade Log' }],
   },
 ];

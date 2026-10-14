@@ -5,11 +5,23 @@
  *
  * The x axis is the bar index, so nights, weekends and market holidays leave no gaps; labels are
  * the bars' times. Live updates are batched to one redraw per animation frame.
+ *
+ * Data flow: setData/prependData/updateBar change `bars`; reshow() derives `shown` (bars, or
+ * Heikin-Ashi bars) and the marks' bar indexes; apply() recomputes indicators and hands arrays to
+ * uPlot, whose hooks (underSeries, overSeries) draw everything uPlot doesn't know about.
+ *
+ * Costs (n bars loaded, v bars visible, I indicators, M marks):
+ *   live tick on the last bar   O(1) to update bars and shown, then one frame: O(I·n) indicators
+ *                               + O(n) for uPlot's setData + O(v) drawing. n ≤ ~20,000 keeps a
+ *                               frame around a millisecond; indicators could be made incremental
+ *                               if charts ever hold far more bars.
+ *   a new bar / marks change    O(M log n) to place marks (binary search per mark)
+ *   y range                     O(v · lines), no temporary arrays
  */
 import uPlot from '../../../vendor/uplot.js';
 import { el, icon } from '../../ui/dom.js';
 import { getIndicator } from '../indicators/index.js';
-import { niceTicks, logTicks, indexOfTime, timeOfIndex, timeLabel, timeFull, visibleRange, heikinAshi } from '../scale.js';
+import { niceTicks, logTicks, indexOfTime, timeOfIndex, timeLabel, timeFull, visibleRange, heikinAshi, heikinAshiBar } from '../scale.js';
 import { DEFAULT_STATE } from '../adapter.js';
 import { SHAPES, labelPrices } from '../drawings/shapes.js';
 import { readPalette } from './palette.js';
@@ -107,7 +119,13 @@ export function createUplotChart({ container, formatPrice, roundPrice, tick, sta
   }
 
   const priceInstances = () => instances.filter((i) => i.def.pane === 'price');
-  const xs = () => shown.map((_, i) => i);
+  /** The x values are just 0..n-1; the array is kept and only extended, not rebuilt per frame. @type {number[]} */
+  let xsCache = [];
+  const xs = () => {
+    if (xsCache.length > shown.length) xsCache = xsCache.slice(0, shown.length);
+    for (let i = xsCache.length; i < shown.length; i += 1) xsCache.push(i);
+    return xsCache;
+  };
 
   /** @returns {uPlot.AlignedData} */
   function mainData() {
@@ -155,18 +173,25 @@ export function createUplotChart({ container, formatPrice, roundPrice, tick, sta
     view = { min: max - span, max };
   }
 
+  /**
+   * The visible price range: bars plus price-pane indicator lines in view. Running min/max, O(v)
+   * per line, with no temporary arrays (Math.min(...big) can also overflow the call stack).
+   */
   function yRange() {
     if (!state.autoScale && yManual) return yManual;
-    /** @type {number[]} */
-    const extra = [];
+    let lo = Infinity, hi = -Infinity;
     const a = Math.max(0, Math.floor(view.min)), b = Math.min(shown.length - 1, Math.ceil(view.max));
     for (const inst of priceInstances()) {
       for (const line of inst.result.lines) {
-        for (let i = a; i <= b; i += 1) { const v = line.values[i]; if (v !== null && v !== undefined) extra.push(v); }
+        for (let i = a; i <= b; i += 1) { const v = line.values[i]; if (v !== null && v !== undefined) { if (v < lo) lo = v; if (v > hi) hi = v; } }
       }
     }
-    let r = visibleRange(shown, view.min, view.max, extra.length ? [Math.min(...extra), Math.max(...extra)] : []) ?? [0, 1];
-    if (state.log && r[0] <= 0) r = [Math.max(r[1] * 0.001, Math.min(...shown.slice(a, b + 1).map((x) => x.low)) * 0.95), r[1]];
+    let r = visibleRange(shown, view.min, view.max, Number.isFinite(lo) ? [lo, hi] : []) ?? [0, 1];
+    if (state.log && r[0] <= 0) {
+      let low = Infinity;
+      for (let i = a; i <= b; i += 1) if (shown[i].low < low) low = shown[i].low;
+      r = [Math.max(r[1] * 0.001, low * 0.95), r[1]];
+    }
     yLast = r;
     return r;
   }
@@ -788,9 +813,14 @@ export function createUplotChart({ container, formatPrice, roundPrice, tick, sta
   yAxisGrip.addEventListener('dblclick', () => { state.autoScale = true; yManual = null; emit('autoScaleChange', true); schedule(); });
 
   // ------------------------------------------------------------------ data in
+  /** Derive `shown` and the marks' bar indexes from `bars`. O(n + M log n). */
   function reshow() {
     shown = state.type === 'heikin-ashi' ? heikinAshi(bars) : bars;
-    // A mark belongs to the bar that contains its time.
+    placeMarks();
+  }
+
+  /** A mark belongs to the bar that contains its time. O(M log n). */
+  function placeMarks() {
     markIdx = marks.map((m) => ({ index: Math.floor(indexOfTime(shown, m.time) + 1e-9), side: m.side, text: m.text })).filter((m) => m.index >= 0 && m.index < shown.length);
     // Counts for tests and support ("how many bars did it load?").
     root.dataset.bars = String(bars.length);
@@ -842,16 +872,22 @@ export function createUplotChart({ container, formatPrice, roundPrice, tick, sta
       reshow();
       apply();
     },
+    // Ticks arrive many times a second: update in O(1) and let the frame redraw.
     updateBar(bar) {
       const last = bars[bars.length - 1];
       if (last && bar.time < last.time) return;
       const atEdge = view.max >= bars.length - 1;
-      if (last && bar.time === last.time) bars[bars.length - 1] = bar;
-      else {
+      const ha = state.type === 'heikin-ashi';
+      if (last && bar.time === last.time) {
+        bars[bars.length - 1] = bar;
+        // Heikin-Ashi: only the last derived bar changes. Otherwise `shown` is `bars` itself.
+        if (ha) shown[shown.length - 1] = heikinAshiBar(shown[shown.length - 2] ?? null, bar);
+      } else {
         bars.push(bar);
+        if (ha) shown.push(heikinAshiBar(shown[shown.length - 1] ?? null, bar));
         if (atEdge) view = { min: view.min + 1, max: view.max + 1 };
+        placeMarks(); // a mark at the newest time now has a bar to sit on (also updates data-bars)
       }
-      reshow();
       schedule();
     },
     configure(next) {

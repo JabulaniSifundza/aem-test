@@ -3,6 +3,17 @@
  * buy/sell buttons, footer scale controls, and the trading on the chart (order and position lines
  * that can be dragged and cancelled, execution marks). The plot itself is a ChartAdapter, so this
  * file does not change when the licensed TradingView library replaces uPlot.
+ *
+ * Flow, the way TradingView's own widget drives a datafeed:
+ *   load(): resolveSymbol → getBars(countBack 400) → chart.setData → subscribeBars (live ticks
+ *           build the last bar: chart.updateBar) → getMarks (own executions).
+ *   The chart asks for older bars (needHistory) as the user scrolls left: loadHistory()
+ *   prepends another 400. Every load bumps `loadSeq`, so answers to a superseded request
+ *   (the user switched symbol mid-flight) are dropped.
+ *   Trading lines come from the broker's cache via host events (order, position), not from REST;
+ *   dragging a line modifies the order, its × cancels it.
+ *   Edits to drawings and indicators are kept on an undo stack and in the widget's params, so
+ *   the workspace restores them (persist()).
  */
 import { el, icon, iconButton } from '../ui/dom.js';
 import { dialog, toast, confirm, openMenu, field, stepper, promptText, switchField } from '../ui/feedback.js';
@@ -54,7 +65,11 @@ export function chartWidget(ctx) {
       let barsGuid = '';
       /** @type {number | undefined} */
       let savedChartId = params.chartId;
-      /** @type {Order[]} */ let orders = [];
+      // Only orders that can still show as a line are kept, by id: an order event is O(1) and
+      // drawing the lines is O(live orders), however long the order history is.
+      /** @type {Map<string, Order>} */ let liveOrders = new Map();
+      /** @param {Order} o */
+      const keepOrder = (o) => { if (isFinal(o.status) || o.status === 'PLACING') liveOrders.delete(o.id); else liveOrders.set(o.id, o); };
       /** @type {Position[]} */ let positions = [];
       /** @type {Record<string, any>} */ let quote = {};
       /** @type {Array<() => void>} */ const stops = [];
@@ -396,8 +411,8 @@ export function chartWidget(ctx) {
         if (!chart) return;
         /** @type {ChartLine[]} */
         const lines = [];
-        for (const o of orders) {
-          if (o.symbol !== symbol || isFinal(o.status) || o.status === 'PLACING') continue;
+        for (const o of liveOrders.values()) {
+          if (o.symbol !== symbol) continue;
           const usesStop = o.type === 'STOP' || o.type === 'TRAILING_STOP' || (o.type === 'STOP_LIMIT' && !o.triggered);
           const price = usesStop ? o.stopPrice : o.limitPrice;
           if (!price) continue;
@@ -427,13 +442,16 @@ export function chartWidget(ctx) {
       }
 
       async function refreshTrading() {
-        [orders, positions] = await Promise.all([ctx.broker.orders(), ctx.broker.positions()]);
+        const [all, open] = await Promise.all([ctx.broker.orders(), ctx.broker.positions()]);
+        liveOrders = new Map();
+        for (const o of all) keepOrder(o);
+        positions = open;
         refreshLines();
       }
 
       /** @param {string} id @param {number} price */
       async function onLineDrag(id, price) {
-        const order = orders.find((o) => `o:${o.id}` === id);
+        const order = id.startsWith('o:') ? liveOrders.get(id.slice(2)) : undefined; // order lines are "o:<order id>"
         if (!order) { refreshLines(); return; }
         const p = priceString(price);
         if (!ctx.settings.oneClick) {
@@ -462,7 +480,7 @@ export function chartWidget(ctx) {
 
       /** @param {string} id */
       async function onLineCancel(id) {
-        const order = orders.find((o) => `o:${o.id}` === id);
+        const order = id.startsWith('o:') ? liveOrders.get(id.slice(2)) : undefined; // order lines are "o:<order id>"
         const position = positions.find((p) => `p:${p.id}` === id);
         if (position) {
           if (ctx.settings.oneClick) {
@@ -631,7 +649,7 @@ export function chartWidget(ctx) {
         c.configure(params.chart ?? {});
         syncFooter();
         stops.push(
-          ctx.host.on('order', (o) => { const i = orders.findIndex((x) => x.id === o.id); if (i >= 0) orders[i] = o; else orders.push(o); if (o.symbol === symbol) refreshLines(); }),
+          ctx.host.on('order', (o) => { keepOrder(o); if (o.symbol === symbol) refreshLines(); }),
           ctx.host.on('position', (p) => { const i = positions.findIndex((x) => x.id === p.id); if (i >= 0) positions[i] = p; else positions.push(p); if (p.symbol === symbol) refreshLines(); }),
           ctx.host.on('execution', (e) => { if (e.symbol === symbol) loadMarks(); }),
           ctx.host.on('reset', () => { refreshTrading(); loadMarks(); }),

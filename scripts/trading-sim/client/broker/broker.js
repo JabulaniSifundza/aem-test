@@ -12,6 +12,14 @@
  *   server de-duplicates it, so a retry can never place a second order
  * - P&L is computed with decimals from live quotes (P-4 "P&L updates")
  * - after the trading stream reconnects, orders, positions, executions and the account are reloaded
+ *
+ * Data flow: REST snapshots fill the cache once (reload); after that the trading stream's events
+ * keep it current, and every change is forwarded to the host, which widgets listen to. Widgets
+ * never call REST for orders or positions themselves.
+ *
+ * Costs: an order or position event is O(1) (Maps by id); a fill is O(1) (executions are kept
+ * oldest first and appended); a quote is O(P) to re-price positions; executions() is O(E) for
+ * the copy it returns; a depth frame is parsed once, then handed to each subscriber of its symbol.
  */
 import { D } from '../../shared/decimal.js';
 import { ApiError } from '../../shared/protocol.js';
@@ -57,7 +65,7 @@ export function createBroker({ transport, host, datafeed, uuid = () => globalThi
   const orders = new Map();
   /** @type {Map<string, Position>} */
   const positions = new Map();
-  /** @type {Execution[]} */
+  /** Oldest first, so a fill is an O(1) push; readers get newest first. @type {Execution[]} */
   let executions = [];
   /** @type {import('./host.js').Equity & Record<string, string>} */
   let account = { equity: '0', unrealizedPL: '0' };
@@ -67,6 +75,8 @@ export function createBroker({ transport, host, datafeed, uuid = () => globalThi
   const depthSubs = new Map();
   /** @type {Map<string, () => void>} */
   const depthStops = new Map();
+  /** Depth subscribers per symbol: the stream subscription ends with the last one. @type {Map<string, number>} */
+  const depthCount = new Map();
   let depthSeq = 0;
   /** @type {Promise<void> | null} */
   let loading = null;
@@ -90,7 +100,7 @@ export function createBroker({ transport, host, datafeed, uuid = () => globalThi
         watchQuotes();
         break;
       case 'EXECUTION_FILLED':
-        executions = [frame.execution, ...executions];
+        executions.push(frame.execution);
         host.executionUpdate(frame.execution);
         break;
       case 'EQUITY_UPDATED': {
@@ -99,14 +109,14 @@ export function createBroker({ transport, host, datafeed, uuid = () => globalThi
         host.equityUpdate(account);
         break;
       }
-      case 'l2':
-        for (const sub of depthSubs.values()) {
-          if (sub.symbol !== frame.symbol) continue;
-          /** @param {[string, string]} level */
-          const level = ([price, volume]) => ({ price: Number(price), volume: Number(volume) });
-          sub.callback({ snapshot: Boolean(frame.isSnapshot), asks: frame.asks.map(level), bids: frame.bids.map(level) });
-        }
+      case 'l2': {
+        /** @param {[string, string]} level */
+        const level = ([price, volume]) => ({ price: Number(price), volume: Number(volume) });
+        /** @type {DepthData} */
+        const data = { snapshot: Boolean(frame.isSnapshot), asks: frame.asks.map(level), bids: frame.bids.map(level) };
+        for (const sub of depthSubs.values()) if (sub.symbol === frame.symbol) sub.callback(data);
         break;
+      }
       case 'error':
         if (frame.code === 'unauthorized' || frame.code === 'token_expired') host.connectionStatusUpdate('disconnected');
         break;
@@ -128,7 +138,10 @@ export function createBroker({ transport, host, datafeed, uuid = () => globalThi
     }
   }
 
-  /** Recompute P&L from the latest marks. */
+  /**
+   * Recompute P&L from the latest marks, with decimals, between the server's equity events (which
+   * come at most twice a second). Only positions whose P&L changed are reported. O(P).
+   */
   function recomputePL() {
     let total = D(0);
     for (const p of positions.values()) {
@@ -153,7 +166,10 @@ export function createBroker({ transport, host, datafeed, uuid = () => globalThi
     }
   }
 
-  /** Keep a quote subscription on the symbols we hold. */
+  /**
+   * Keep one quote subscription on exactly the symbols held. The id encodes the symbol set, so
+   * an unchanged set costs nothing and a changed one swaps the subscription. O(P log P).
+   */
   function watchQuotes() {
     const symbols = [...new Set([...positions.values()].map((p) => p.symbol))].sort();
     const guid = `broker-pl:${symbols.join(',')}`;
@@ -167,7 +183,11 @@ export function createBroker({ transport, host, datafeed, uuid = () => globalThi
     }, guid);
   }
 
-  /** Load everything from the snapshots (start-up, reconnect, account reset). */
+  /**
+   * Load everything from the snapshots (start-up, reconnect, account reset). Concurrent callers
+   * share one load. Events that arrive during the load may be overwritten by the snapshot, which
+   * is newer or equal, so nothing is lost.
+   */
   function reload() {
     loading ??= (async () => {
       const [o, p, e, a] = await Promise.all([rest.get('/orders'), rest.get('/positions'), rest.get('/executions'), rest.get('/account')]);
@@ -175,7 +195,7 @@ export function createBroker({ transport, host, datafeed, uuid = () => globalThi
       for (const x of o) orders.set(x.id, x);
       positions.clear();
       for (const x of p) positions.set(x.id, x);
-      executions = e;
+      executions = [...e].reverse(); // the server sends newest first
       account = a;
       host.reset();
       host.equityUpdate(account);
@@ -219,8 +239,8 @@ export function createBroker({ transport, host, datafeed, uuid = () => globalThi
 
     orders: async () => [...orders.values()],
     positions: async () => [...positions.values()],
-    /** @param {string} [symbol] */
-    executions: async (symbol) => (symbol ? executions.filter((x) => x.symbol === symbol) : [...executions]),
+    /** Newest first. @param {string} [symbol] */
+    executions: async (symbol) => (symbol ? executions.filter((x) => x.symbol === symbol) : [...executions]).reverse(),
     closedPositions: () => rest.get('/positions', { query: { status: 'closed' } }),
     account: () => ({ ...account }),
     /** Re-read the account from the server. */
@@ -324,6 +344,7 @@ export function createBroker({ transport, host, datafeed, uuid = () => globalThi
       depthSeq += 1;
       const id = `DOM_${symbol}_${depthSeq}`;
       depthSubs.set(id, { symbol, callback });
+      depthCount.set(symbol, (depthCount.get(symbol) ?? 0) + 1);
       // (Re)subscribing also makes the server send a fresh snapshot, which a new subscriber needs.
       depthStops.set(symbol, stream.subscribe(`l2:${symbol}`, { action: 'subscribe_l2', symbol, depthLevels: 25 }, { action: 'unsubscribe_l2', symbol }));
       return id;
@@ -332,8 +353,11 @@ export function createBroker({ transport, host, datafeed, uuid = () => globalThi
     /** @param {string} subscriptionId */
     unsubscribeDepth(subscriptionId) {
       const sub = depthSubs.get(subscriptionId);
+      if (!sub) return;
       depthSubs.delete(subscriptionId);
-      if (!sub || [...depthSubs.values()].some((s) => s.symbol === sub.symbol)) return;
+      const left = (depthCount.get(sub.symbol) ?? 1) - 1;
+      if (left > 0) { depthCount.set(sub.symbol, left); return; }
+      depthCount.delete(sub.symbol);
       depthStops.get(sub.symbol)?.();
       depthStops.delete(sub.symbol);
     },

@@ -3,6 +3,16 @@
  * L2 stream, depth bars, the last trade, own working orders, the position, and one-click order
  * entry: click a bid size to buy limit at that price, an ask size to sell. With 1-Click off every
  * order is previewed first.
+ *
+ * How it stays cheap at four or more updates a second:
+ * - Prices are integer tick indexes (price / tick), so the book is two Maps index → size and a
+ *   level update is O(1). Decimal arithmetic happens only at the edges (labels, orders).
+ * - The DOM is a fixed pool of rows sized to the visible height (a ResizeObserver keeps the
+ *   height, so drawing never forces layout). Scrolling relabels rows; it never creates them.
+ * - Draws are coalesced to one per animation frame (schedule), and each draw touches only what
+ *   changed: price labels are memoised per index, text is written only when it differs, and a
+ *   cell's order buttons are rebuilt only when its orders change.
+ * Per draw: O(R + W) for R visible rows and W working orders on the symbol.
  */
 import { el, iconButton, icon } from '../ui/dom.js';
 import { dialog, confirm, toast, segmented, switchField, stepper, field } from '../ui/feedback.js';
@@ -42,6 +52,22 @@ export function ladderWidget(ctx) {
       const tickD = () => D(s.tick);
       const toIndex = (/** @type {string | number} */ price) => Number(D(price).div(tickD()).toDecimalPlaces(0));
       const toPrice = (/** @type {number} */ i) => D(i).mul(tickD()).toFixed(tickD().decimalPlaces());
+      /** Formatted price per tick index; rows show the same few dozen prices over and over. @type {Map<number, string>} */
+      const labels = new Map();
+      /** @param {number} i */
+      const label = (i) => {
+        let text = labels.get(i);
+        if (text === undefined) {
+          if (labels.size > 4096) labels.clear(); // bounded: a long scroll session can't grow it forever
+          text = formatPrice(symbol, toPrice(i));
+          labels.set(i, text);
+        }
+        return text;
+      };
+      /** Write text only when it changed (a write replaces the text node and dirties layout). @param {HTMLElement} node @param {string} text */
+      const setText = (node, text) => { if (node.textContent !== text) node.textContent = text; };
+      /** @param {HTMLElement} node @param {string} name @param {string} value */
+      const setAttr = (node, name, value) => { if (node.getAttribute(name) !== value) node.setAttribute(name, value); };
 
       // ---------------------------------------------------------------- controls
       const picker = symbolSelect({ value: symbol, label: 'Symbol', onChange: (v) => setSymbol(v) });
@@ -124,25 +150,29 @@ export function ladderWidget(ctx) {
         /** @type {Map<number, Order[]>} */
         const ordersAt = new Map();
         for (const o of working) {
+          // A working stop-limit rests at its stop until triggered, then at its limit.
           const px = o.type === 'LIMIT' || (o.type === 'STOP_LIMIT' && o.triggered) ? o.limitPrice : o.stopPrice;
           if (!px) continue;
           const i = toIndex(px);
-          ordersAt.set(i, [...(ordersAt.get(i) ?? []), o]);
+          const list = ordersAt.get(i);
+          if (list) list.push(o); else ordersAt.set(i, [o]);
         }
         for (let k = 0; k < pool.length; k += 1) {
           const p = pool[k];
           const i = top - k;
           p.index = i;
-          const price = toPrice(i);
+          const priceText = label(i);
           const b = bids.get(i);
           const a = asks.get(i);
-          p.cells[2].textContent = formatPrice(symbol, price);
-          p.bidQty.textContent = b ? formatQty(symbol, String(b)) : '';
-          p.askQty.textContent = a ? formatQty(symbol, String(a)) : '';
+          const bText = b ? formatQty(symbol, String(b)) : '';
+          const aText = a ? formatQty(symbol, String(a)) : '';
+          setText(p.cells[2], priceText);
+          setText(p.bidQty, bText);
+          setText(p.askQty, aText);
           p.bidBar.style.setProperty('--depth', `${b ? (b / maxSize) * 100 : 0}%`);
           p.askBar.style.setProperty('--depth', `${a ? (a / maxSize) * 100 : 0}%`);
-          p.cells[1].setAttribute('aria-label', `Buy limit at ${formatPrice(symbol, price)}${b ? `, ${formatQty(symbol, String(b))} bid` : ''}`);
-          p.cells[3].setAttribute('aria-label', `Sell limit at ${formatPrice(symbol, price)}${a ? `, ${formatQty(symbol, String(a))} offered` : ''}`);
+          setAttr(p.cells[1], 'aria-label', `Buy limit at ${priceText}${b ? `, ${bText} bid` : ''}`);
+          setAttr(p.cells[3], 'aria-label', `Sell limit at ${priceText}${a ? `, ${aText} offered` : ''}`);
           p.row.classList.toggle('cme-ladder__row--last', i === last);
           p.row.classList.toggle('cme-ladder__row--inside-ask', i === bestAsk);
           p.row.classList.toggle('cme-ladder__row--position', i === avg);
@@ -156,8 +186,8 @@ export function ladderWidget(ctx) {
             p.cells[col].dataset.orders = key;
             p.cells[col].replaceChildren(...mine.map((o) => el('button', {
               class: `cme-ladder__order${sideName === 'SELL' ? ' cme-ladder__order--sell' : ''}`, type: 'button',
-              title: `Cancel ${o.side.toLowerCase()} ${o.type.toLowerCase()} ${formatQty(symbol, o.qty)} at ${formatPrice(symbol, price)}`,
-              'aria-label': `Cancel ${o.side.toLowerCase()} order ${formatQty(symbol, o.qty)} at ${formatPrice(symbol, price)}`,
+              title: `Cancel ${o.side.toLowerCase()} ${o.type.toLowerCase()} ${formatQty(symbol, o.qty)} at ${priceText}`,
+              'aria-label': `Cancel ${o.side.toLowerCase()} order ${formatQty(symbol, o.qty)} at ${priceText}`,
               onclick: () => cancelOrder(ctx, o, { quick: true }),
             }, formatQty(symbol, D(o.qty).minus(o.filledQty).toString()), o.bracket ? (o.bracket === 'stopLoss' ? ' SL' : ' TP') : '', icon('close', 'sm'))));
           }
@@ -170,6 +200,7 @@ export function ladderWidget(ctx) {
       }
 
       // ---------------------------------------------------------------- data
+      /** The symbol's working orders and position from the broker's cache. O(orders held). */
       async function refreshTrading() {
         working = (await ctx.broker.orders()).filter((o) => o.symbol === symbol && ['WORKING', 'PARTIALLY_FILLED'].includes(o.status));
         position = (await ctx.broker.positions()).find((p) => p.symbol === symbol) ?? null;
@@ -193,6 +224,7 @@ export function ladderWidget(ctx) {
       /** @param {string} next */
       function setSymbol(next) {
         symbol = next; s = symbolDef(symbol);
+        labels.clear(); // another tick size and price format
         qty.node.dataset.step = s.lot; qty.node.dataset.min = s.minQty; qty.node.dataset.max = s.maxQty; qty.input.value = s.minQty;
         rows.setAttribute('aria-label', `${symbol} price ladder`);
         api.setTitle(`${symbol} DOM`);

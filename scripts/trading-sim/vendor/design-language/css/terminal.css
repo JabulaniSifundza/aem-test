@@ -173,6 +173,62 @@
 .cme-panel--drop-target { box-shadow: inset 0 0 0 var(--border-medium) var(--color-terminal-action); }
 .cme-panel--dragging { opacity: 0.6; }
 
+/* Drop preview while a tab is dragged over a panel (data-drop on .cme-panel): an edge zone
+   previews the half the new panel will take; the centre adds the widget as a tab. (1.2.4) */
+.cme-panel[data-drop] { position: relative; }
+.cme-panel[data-drop]::after { content: ""; position: absolute; z-index: 20; pointer-events: none; background: var(--color-terminal-row-selected); opacity: 0.6; }
+.cme-panel[data-drop="center"]::after { inset: 0; }
+.cme-panel[data-drop="left"]::after { inset: 0 50% 0 0; }
+.cme-panel[data-drop="right"]::after { inset: 0 0 0 50%; }
+.cme-panel[data-drop="top"]::after { inset: 0 0 50% 0; }
+.cme-panel[data-drop="bottom"]::after { inset: 50% 0 0 0; }
+
+/* Floating panels (1.2.4). A widget added to a workspace that already has panels opens floating
+   over them (600 × 400, cascading); its header moves it, its edges and corners resize it, and its
+   Dock button docks it. The layer covers the dock's content box and lets clicks through. */
+.cme-dock__floats { position: absolute; inset: 0 var(--terminal-gutter) var(--terminal-gutter); z-index: 30; pointer-events: none; }
+.cme-dock__float { position: absolute; display: flex; min-width: 240px; min-height: 160px; pointer-events: auto; border: var(--border-thin) solid var(--color-terminal-rule); box-shadow: var(--shadow-elevation-1); }
+.cme-dock__float > .cme-panel { min-width: 0; min-height: 0; }
+.cme-panel--floating .cme-panel__tabs { cursor: move; touch-action: none; }
+.cme-dock__float.is-moving { opacity: 0.92; }
+.cme-dock__grip { position: absolute; z-index: 2; touch-action: none; }
+.cme-dock__grip--n { top: -3px; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.cme-dock__grip--s { bottom: -3px; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.cme-dock__grip--w { left: -3px; top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
+.cme-dock__grip--e { right: -3px; top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
+.cme-dock__grip--nw { top: -3px; left: -3px; width: 10px; height: 10px; cursor: nw-resize; }
+.cme-dock__grip--ne { top: -3px; right: -3px; width: 10px; height: 10px; cursor: ne-resize; }
+.cme-dock__grip--sw { bottom: -3px; left: -3px; width: 10px; height: 10px; cursor: sw-resize; }
+.cme-dock__grip--se { bottom: -3px; right: -3px; width: 10px; height: 10px; cursor: se-resize; }
+
+/* Side sheet (1.2.4): a picker that slides out beside the side menu (New chart, New price
+   ladder): title, search, grouped choices, Cancel / Add. The scrim covers the workspace. */
+.cme-terminal__main { position: relative; }
+.cme-tsheet-scrim { position: absolute; inset: 0; z-index: 48; background: var(--color-terminal-overlay); }
+.cme-tsheet {
+  position: absolute; top: 0; bottom: 0; left: 0; z-index: 49; display: flex; flex-direction: column;
+  width: min(400px, 100%); background: var(--color-terminal-panel); color: var(--color-terminal-text);
+  border-right: var(--border-thin) solid var(--color-terminal-rule); box-shadow: var(--shadow-elevation-1);
+}
+.cme-tsheet__header { display: flex; align-items: center; justify-content: space-between; padding: var(--terminal-space-5) var(--terminal-space-6) var(--terminal-space-2); }
+.cme-tsheet__title { margin: 0; font-family: var(--type-terminal-head-family); font-size: var(--type-terminal-head-size); line-height: var(--type-terminal-head-line); letter-spacing: 0.5px; text-transform: uppercase; color: var(--color-terminal-text-strong); }
+.cme-tsheet__intro { margin: 0; padding: 0 var(--terminal-space-6) var(--terminal-space-5); font-size: var(--type-terminal-body-size); line-height: var(--type-terminal-body-line); }
+.cme-tsheet__search { padding: 0 var(--terminal-space-6) var(--terminal-space-4); }
+.cme-tsheet__body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--terminal-space-6); }
+.cme-tsheet__group { border-bottom: var(--border-thin) solid var(--color-terminal-rule-soft); }
+.cme-tsheet__group-toggle {
+  display: flex; align-items: center; justify-content: space-between; width: 100%; padding: var(--terminal-space-4) var(--terminal-space-3);
+  background: none; border: 0; cursor: pointer; text-align: left; font: inherit; font-weight: var(--weight-semibold); color: var(--color-terminal-text-strong);
+}
+.cme-tsheet__group-toggle[aria-expanded="true"] .cme-ticon { transform: rotate(180deg); }
+.cme-tsheet__options { list-style: none; margin: 0; padding: 0 0 var(--terminal-space-3); }
+.cme-tsheet__option { display: flex; align-items: center; gap: var(--terminal-space-4); padding: var(--terminal-space-2) var(--terminal-space-3); cursor: pointer; font-size: var(--type-terminal-pill-size); line-height: var(--type-terminal-pill-line); }
+.cme-tsheet__option:hover { background: var(--color-terminal-row-hover); }
+.cme-tsheet__option input { width: 16px; height: 16px; margin: 0; accent-color: var(--color-terminal-action); }
+.cme-tsheet__option-meta { margin-left: auto; color: var(--color-terminal-text-muted); font-size: var(--type-terminal-body-size); }
+.cme-tsheet__footer { display: flex; gap: var(--terminal-space-4); padding: var(--terminal-space-5) var(--terminal-space-6); border-top: var(--border-thin) solid var(--color-terminal-rule-soft); }
+.cme-tsheet__footer > * { flex: 1; }
+
 /* Icon buttons (panel actions, toolbars) */
 .cme-icon-btn {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
@@ -585,3 +641,21 @@ button.cme-ladder__cell:hover { background: var(--color-terminal-row-hover); }
 .cme-widget-link__icon { width: 32px; height: 32px; color: var(--color-terminal-text-muted); }
 .cme-widget-link__title { margin: 0; font-size: var(--type-terminal-tab-size); line-height: var(--type-terminal-tab-line); font-weight: var(--weight-semibold); color: var(--color-terminal-text-strong); }
 .cme-widget-link__text { margin: 0; max-width: 34ch; font-size: var(--type-terminal-body-size); line-height: var(--type-terminal-body-line); color: var(--color-terminal-text-muted); }
+
+/* ===================================================================== Sign-in (1.2.4) */
+/* The terminal's sign-in screen: one card centred on the canvas, the logo, a heading, the fields,
+   one primary button, and an error line that screen readers announce (role="alert"). */
+.cme-tsignin { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: var(--terminal-space-6); background: var(--color-terminal-canvas); }
+.cme-tsignin__card {
+  display: flex; flex-direction: column; gap: var(--terminal-space-5); width: min(400px, 100%);
+  padding: calc(var(--terminal-space-6) * 2); background: var(--color-terminal-panel); color: var(--color-terminal-text);
+  border-radius: var(--radius-xs); box-shadow: var(--shadow-elevation-1);
+}
+.cme-tsignin__logo { height: 28px; width: auto; align-self: flex-start; }
+.cme-tsignin__title { margin: 0; font-size: var(--type-terminal-tab-size); line-height: var(--type-terminal-tab-line); font-weight: var(--weight-semibold); color: var(--color-terminal-text-strong); }
+.cme-tsignin__text { margin: 0; font-size: var(--type-terminal-body-size); line-height: var(--type-terminal-body-line); color: var(--color-terminal-text-muted); }
+.cme-tsignin__form { display: flex; flex-direction: column; gap: var(--terminal-space-5); margin: 0; }
+.cme-tsignin__error { margin: 0; padding: var(--terminal-space-3) var(--terminal-space-4); border-left: var(--border-thick) solid var(--color-terminal-error); background: var(--color-terminal-raised); font-size: var(--type-terminal-body-size); line-height: var(--type-terminal-body-line); color: var(--color-terminal-text-strong); }
+.cme-tsignin__error:empty { display: none; }
+.cme-tsignin__submit { width: 100%; justify-content: center; }
+

@@ -5,6 +5,14 @@
  *
  *   createServices({ api: 'http://localhost:8787' })   real HTTP + WebSocket backend
  *   createServices({})                                  in-page loopback (no server)
+ *
+ * Start-up:
+ *   1. transport: REST clients and two sockets for the backend (or a loopback over a Worker port)
+ *   2. datafeed, broker + host, chart storage, app records on top of the transport
+ *   3. in parallel, since none needs another: GET /time (widgets show the simulated clock, which
+ *      may not be this computer's time), the saved settings (records, falling back to defaults),
+ *      and broker.connect() (open the trading stream; load orders, positions, executions, account)
+ * Widgets mount after this resolves, so they always start from a loaded account.
  */
 import { createTransport, urlsFromBase } from './transport/transport.js';
 import { createDevTokenSource } from './transport/tokens.js';
@@ -27,13 +35,14 @@ import { createRecords } from './state/records.js';
 const DEFAULT_SETTINGS = { theme: 'light', oneClick: false, menuCollapsed: false };
 
 /**
- * @param {{ api?: string | null, user?: string, start?: number, seed?: string, inPage?: boolean, theme?: 'light' | 'dark' }} options
+ * @param {{ api?: string | null, user?: string, start?: number, seed?: string, inPage?: boolean, theme?: 'light' | 'dark', tokens?: import('./transport/tokens.js').TokenSource & { signOut?: () => Promise<void> } }} options
  *   inPage: run the loopback on the page's thread even where a Worker is allowed
  *   theme: the theme to use until the user picks one
+ *   tokens: a signed-in session (email and password); without it, the development sign-in as `user`
  */
-export async function createServices({ api, user = 'demo', start, seed, inPage = false, theme } = {}) {
+export async function createServices({ api, user = 'demo', start, seed, inPage = false, theme, tokens } = {}) {
   const transport = api
-    ? createTransport({ urls: urlsFromBase(api), tokens: createDevTokenSource({ authUrl: `${api.replace(/\/$/, '')}/trade/v1/auth`, user }) })
+    ? createTransport({ urls: urlsFromBase(api), tokens: tokens ?? createDevTokenSource({ authUrl: `${api.replace(/\/$/, '')}/trade/v1/auth`, user }) })
     : createLoopbackTransport({ user, start, seed, port: createAutoPort({ preferWorker: !inPage }) });
   const host = createHost();
   const datafeed = createDatafeed(transport);
@@ -42,19 +51,23 @@ export async function createServices({ api, user = 'demo', start, seed, inPage =
   const records = createRecords(storage);
   const bus = new EventTarget();
 
-  // Server clock: the simulated time can differ from this computer's.
-  const serverTime = await transport.rest.marketdata.get('/time');
+  // The server clock (the simulated time can differ from this computer's) and the saved
+  // settings don't depend on each other: ask for both at once, one round trip instead of two.
+  // The account load (broker.connect) is independent too, so it joins the same round trip.
+  const [serverTime, saved] = await Promise.all([transport.rest.marketdata.get('/time'), records.load('settings', {}), broker.connect()]);
   const clockOffset = serverTime.time * 1000 - Date.now();
   const now = () => Date.now() + clockOffset;
 
   /** @type {Settings} */
-  const settings = { ...DEFAULT_SETTINGS, ...(theme ? { theme } : {}), ...(await records.load('settings', {})) };
-
-  await broker.connect();
+  const settings = { ...DEFAULT_SETTINGS, ...(theme ? { theme } : {}), ...saved };
 
   return {
     transport, host, datafeed, broker, storage, records, bus, now, mode: api ? 'server' : 'loopback',
     settings,
+    /** The signed-in email address, for the header (null for the development sign-in and the loopback). */
+    displayName: /** @type {{ email?: () => string | null }} */ (tokens ?? {}).email?.() ?? null,
+    /** Sign out (only for an email-and-password session); the page then shows the sign-in screen. */
+    signOut: tokens?.signOut ? async () => { await records.flush(); await tokens.signOut?.(); } : null,
     /** @template {keyof Settings} K @param {K} key @param {Settings[K]} value */
     setSetting(key, value) {
       settings[key] = value;

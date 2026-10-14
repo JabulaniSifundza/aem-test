@@ -18,6 +18,19 @@ import { readBlockConfig, getMetadata, toClassName } from './aem.js';
  *   Resolution 1, 5, 15, 30, 60, 240, 1D, 1W or 1M (charts)
  *   Start      a simulated start time (ISO date and time), for demos and tests
  * Page metadata "trading-api", "trading-seed" and "trading-theme" set page-wide defaults.
+ *
+ * Loading order on a page, and why:
+ *   1. EDS decorates each block: decorateTradingBlock reads the table, puts a "Starting…" line
+ *      in place and returns at once. It is not awaited, so EDS shows the page (LCP) without
+ *      waiting for the simulator.
+ *   2. afterLoad(): the window's load event, then an idle moment (requestIdleCallback, at most
+ *      1.5 s), so the simulator never competes with the page's own content.
+ *   3. The first block creates the shared services (tradingServices); the market starts in a Web
+ *      Worker (or the page thread if the CSP forbids workers) and the shell module loads, both in
+ *      parallel.
+ *   4. Blocks mount one per task (mountQueue + yieldToMain), so input stays responsive between
+ *      them: no single long task, however many blocks the page has.
+ * Every block on the page gets the same services, so they share one practice account.
  */
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'SPY', 'QQQ'];
@@ -48,7 +61,9 @@ let mountQueue = Promise.resolve();
 const shell = () => import('./trading-sim/client/shell.js');
 
 /**
- * Reads the block table; unknown rows are ignored and bad values fall back to defaults.
+ * Reads the block table; unknown rows are ignored and bad values fall back to defaults, so an
+ * author's typo never breaks the page. Values are checked against allow-lists (symbols,
+ * resolutions, themes) rather than trusted.
  * @param {Element} block
  */
 export function readTradingConfig(block) {
@@ -76,20 +91,37 @@ export function readTradingConfig(block) {
 }
 
 /**
- * The page's services, created by the first block that asks.
+ * The page's services, created by the first block that asks; later blocks get the same promise.
+ * The first block's API, user, seed and start win for the whole page (one account per page).
+ * With an API, the user signs in first (email and password), in the first block's place; the
+ * session is kept for the tab (client/session.js). Without one there is nothing to sign in to:
+ * the market runs in the page.
  * @param {ReturnType<typeof readTradingConfig>} config
+ * @param {HTMLElement} root where the sign-in screen goes if it is needed
  */
-export function tradingServices(config) {
+export function tradingServices(config, root) {
   if (!servicesPromise) {
-    servicesPromise = import('./trading-sim/client/services.js').then(({ createServices }) => createServices({
-      api: config.api,
-      user: config.user,
-      seed: config.seed,
-      start: config.start,
-      theme: config.theme,
-      // The market runs in a Worker (head.html allows same-origin workers), or on the page
-      // thread if the Content Security Policy does not allow it.
-    }));
+    servicesPromise = (async () => {
+      const { createServices } = await import('./trading-sim/client/services.js');
+      let tokens;
+      if (config.api) {
+        const { signedIn } = await import('./trading-sim/client/session.js');
+        ({ tokens } = await signedIn(config.api, root));
+      }
+      const services = await createServices({
+        api: config.api,
+        user: config.user,
+        seed: config.seed,
+        start: config.start,
+        theme: config.theme,
+        tokens,
+        // The market runs in a Worker (head.html allows same-origin workers), or on the page
+        // thread if the Content Security Policy does not allow it.
+      });
+      const { signOut } = services;
+      if (signOut) services.signOut = async () => { await signOut(); window.location.reload(); };
+      return services;
+    })();
   }
   return servicesPromise;
 }
@@ -117,7 +149,7 @@ export function decorateTradingBlock(block, mount) {
   (async () => {
     try {
       await afterLoad();
-      const [services, sim] = await Promise.all([tradingServices(config), shell()]);
+      const [services, sim] = await Promise.all([tradingServices(config, root), shell()]);
       const turn = mountQueue.then(yieldToMain).then(() => mount(root, services, config, sim));
       mountQueue = turn.catch(() => {});
       await turn;

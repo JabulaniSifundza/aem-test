@@ -19,13 +19,11 @@ import { createTicket } from './widgets/ticket.js';
 import { errorText } from './widgets/common.js';
 import { el, icon, iconButton } from './ui/dom.js';
 import { toast, confirm, openMenu, promptText, switchField, dialog } from './ui/feedback.js';
+import { pickProducts } from './ui/sheet.js';
 import { formatMoney, formatClock, signClass } from './ui/format.js';
 
 /** @typedef {import('./widgets/common.js').AppContext} AppContext */
 /** @typedef {import('./services.js').Services} Services */
-
-/** Widgets that make sense once per dock: opening another focuses the existing one. */
-const SINGLETONS = new Set(['markets', 'positions', 'orders', 'executions', 'trade-log', 'data-window', 'news', 'options', 'calendar', 'commentary', 'cme-news', 'discover', 'education', 'trade-plan']);
 
 /** @type {WeakSet<object>} */
 const wired = new WeakSet();
@@ -78,7 +76,8 @@ function bindTheme(root, ctx) {
  * The account header: funds, P&L, margin, clock, connection, 1-Click, user menu.
  * @param {AppContext} ctx @param {{ userName: string }} o
  */
-function buildHeader(ctx, { userName }) {
+function buildHeader(ctx, { userName: given }) {
+  const userName = ctx.displayName ?? given; // the signed-in address, when there is one
   // ---------------------------------------------------------------- header
   const stat = (/** @type {string} */ label) => {
     const value = el('span', { class: 'cme-account-stat__value' }, '–');
@@ -141,6 +140,7 @@ function buildHeader(ctx, { userName }) {
     { label: 'Dark theme', checked: ctx.settings.theme === 'dark', onSelect: () => setTheme('dark') },
     'separator',
     { label: 'Reset practice account…', danger: true, onSelect: resetAccount },
+    ...(ctx.signOut ? /** @type {const} */ (['separator', { label: 'Sign out', onSelect: () => { ctx.signOut?.(); } }]) : []),
   ], { align: 'right', label: 'Account' }));
 
   /** @param {'light' | 'dark'} theme */
@@ -202,7 +202,7 @@ export async function mountSimulator(root, services, { userName = 'demo', menu: 
     menu.append(el('h2', { class: 'cme-side-menu__section' }, section.title));
     menu.append(el('ul', { class: 'cme-side-menu__list' }, ...section.items.map((item) => {
       const def = defs.get(item.kind);
-      return el('li', {}, el('button', { class: 'cme-side-menu__item', type: 'button', title: item.label, onclick: () => openWidget(item.kind, item.params) },
+      return el('li', {}, el('button', { class: 'cme-side-menu__item', type: 'button', title: item.label, onclick: () => menuPick(item) },
         icon(def?.icon ?? 'plus'), el('span', { class: 'cme-side-menu__label' }, item.label)));
     })));
   }
@@ -278,14 +278,29 @@ export async function mountSimulator(root, services, { userName = 'demo', menu: 
     renderTabs();
   }
 
-  /** @param {string} kind @param {Record<string, any>} [params] */
+  /**
+   * Open a widget as the simulator does: every click adds one (no single-instance widgets);
+   * the dock decides whether it fills an empty workspace or floats (client/ui/dock.js).
+   * @param {string} kind @param {Record<string, any>} [params]
+   */
   function openWidget(kind, params = {}) {
     if (!defs.has(kind)) return;
-    if (SINGLETONS.has(kind) && dock.focus((ref) => ref.kind === kind)) return;
     dock.add(kind, params);
   }
 
-  root.replaceChildren(header, el('div', { class: 'cme-terminal__body' }, ...(showMenu ? [menu] : []), el('main', { class: 'cme-terminal__main' }, wsTabs, dockEl)));
+  /**
+   * A side-menu click: products first for Chart and Price Ladder (one widget per product chosen),
+   * otherwise straight in.
+   * @param {(typeof MENU)[number]['items'][number]} item
+   */
+  async function menuPick(item) {
+    if (!item.picker) { openWidget(item.kind, item.params); return; }
+    const symbols = await pickProducts({ host: main, title: item.picker.title, intro: item.picker.intro, addLabel: item.picker.add, inert: [wsTabs, dockEl] });
+    for (const symbol of symbols) openWidget(item.kind, { ...item.params, symbol });
+  }
+
+  const main = el('main', { class: 'cme-terminal__main' }, wsTabs, dockEl);
+  root.replaceChildren(header, el('div', { class: 'cme-terminal__body' }, ...(showMenu ? [menu] : []), main));
   showWorkspace();
   return { dock, destroy: () => dock.destroy() };
 }
@@ -297,10 +312,7 @@ export async function mountSimulator(root, services, { userName = 'demo', menu: 
  */
 export function mountWidgets(root, services, spec) {
   wirePage(services);
-  const ctx = contextFor(services, root, (kind, params) => {
-    if (SINGLETONS.has(kind) && dock.focus((ref) => ref.kind === kind)) return;
-    dock.add(kind, params);
-  });
+  const ctx = contextFor(services, root, (kind, params) => { dock.add(kind, params); });
   bindTheme(root, ctx);
   const dockEl = el('div', { class: 'cme-dock' });
   const dock = createDock({ root: dockEl, defs: widgetDefs(ctx), onChange: () => {} });

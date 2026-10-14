@@ -8,6 +8,10 @@
  * reset callback fires so the chart reloads anything it missed.
  *
  * Bars and quotes reach the chart as numbers (display only); money is never computed from them.
+ *
+ * Fan-out: subscribers are indexed by symbol, so a tick or quote frame costs O(subscribers of
+ * that symbol), not O(all subscribers). Quote stream subscriptions are reference-counted per
+ * symbol: ten widgets watching BTCUSDT share one server subscription.
  */
 import { createBarAggregator } from './aggregator.js';
 import { normalizeResolution } from '../../shared/resolution.js';
@@ -43,6 +47,22 @@ export function createDatafeed(transport) {
   const barSubs = new Map();
   /** @type {Map<string, { symbols: string[], onRealtime: (data: QuoteData[]) => void }>} */
   const quoteSubs = new Map();
+  /** symbol → bar subscriber ids. @type {Map<string, Set<string>>} */
+  const barsBySymbol = new Map();
+  /** symbol → quote subscriber ids. @type {Map<string, Set<string>>} */
+  const quotesBySymbol = new Map();
+
+  /** @param {Map<string, Set<string>>} index @param {string} symbol @param {string} id */
+  const addTo = (index, symbol, id) => {
+    let set = index.get(symbol);
+    if (!set) { set = new Set(); index.set(symbol, set); }
+    set.add(id);
+  };
+  /** @param {Map<string, Set<string>>} index @param {string} symbol @param {string} id */
+  const removeFrom = (index, symbol, id) => {
+    const set = index.get(symbol);
+    if (set?.delete(id) && set.size === 0) index.delete(symbol);
+  };
   /** Listeners per symbol: the stream subscription stays until the last one leaves. @type {Map<string, number>} */
   const quoteRefs = new Map();
   /** @type {Map<string, () => void>} */
@@ -54,22 +74,47 @@ export function createDatafeed(transport) {
     if (frame.type === 'tick') {
       const t = frame.data;
       const tick = { price: Number(t.price), volume: Number(t.volume), timestamp: t.timestamp };
-      for (const sub of barSubs.values()) {
-        if (sub.symbol !== t.symbol) continue;
-        const bar = sub.aggregator.update(tick);
-        if (bar) sub.onTick(bar);
+      for (const id of barsBySymbol.get(t.symbol) ?? []) {
+        const sub = barSubs.get(id);
+        const bar = sub?.aggregator.update(tick);
+        if (sub && bar) sub.onTick(bar);
       }
     } else if (frame.type === 'quote') {
       const q = /** @type {QuoteData} */ (frame.data);
       lastQuotes.set(q.n, q);
-      for (const sub of quoteSubs.values()) if (sub.symbols.includes(q.n)) sub.onRealtime([q]);
+      for (const id of quotesBySymbol.get(q.n) ?? []) quoteSubs.get(id)?.onRealtime([q]);
     } else if (frame.type === 'reset') {
-      for (const sub of barSubs.values()) if (sub.symbol === frame.symbol) sub.reset();
+      // The server skipped ticks (too many to send): the chart must reload this symbol.
+      for (const id of [...(barsBySymbol.get(frame.symbol) ?? [])]) barSubs.get(id)?.reset();
     }
   });
-  stream.onReconnect(() => { for (const sub of barSubs.values()) sub.reset(); });
+  // Ticks may have been missed while disconnected: every chart reloads (onResetCacheNeeded).
+  stream.onReconnect(() => { for (const sub of [...barSubs.values()]) sub.reset(); });
 
   const ensureOpen = () => stream.open();
+
+  /** @param {string} listenerGuid */
+  function unsubscribeBars(listenerGuid) {
+    const sub = barSubs.get(listenerGuid);
+    if (!sub) return;
+    sub.stop();
+    barSubs.delete(listenerGuid);
+    removeFrom(barsBySymbol, sub.symbol, listenerGuid);
+  }
+
+  /** @param {string} listenerGuid */
+  function unsubscribeQuotes(listenerGuid) {
+    const sub = quoteSubs.get(listenerGuid);
+    quoteSubs.delete(listenerGuid);
+    for (const s of sub?.symbols ?? []) {
+      removeFrom(quotesBySymbol, s, listenerGuid);
+      const count = (quoteRefs.get(s) ?? 1) - 1;
+      if (count > 0) { quoteRefs.set(s, count); continue; }
+      quoteRefs.delete(s);
+      quoteStops.get(s)?.();
+      quoteStops.delete(s);
+    }
+  }
 
   return {
     /** @param {(config: any) => void} callback */
@@ -106,6 +151,8 @@ export function createDatafeed(transport) {
      * @param {(reason: string) => void} onError
      */
     getBars(symbolInfo, resolution, period, onResult, onError) {
+      // The newest bar is remembered so a live subscription can continue it instead of starting
+      // a fresh bar from the first tick (which would lose the bar's open, high and low).
       const symbol = symbolInfo.ticker ?? symbolInfo.name;
       rest.get('/history', { query: { symbol, resolution, from: period.from, to: period.to, countback: period.countBack } })
         .then((data) => {
@@ -123,6 +170,7 @@ export function createDatafeed(transport) {
      * @param {() => void} onResetCacheNeeded
      */
     subscribeBars(symbolInfo, resolution, onTick, listenerGuid, onResetCacheNeeded) {
+      unsubscribeBars(listenerGuid); // a reused id replaces its old subscription cleanly
       ensureOpen();
       const symbol = symbolInfo.ticker ?? symbolInfo.name;
       const res = normalizeResolution(resolution);
@@ -136,13 +184,10 @@ export function createDatafeed(transport) {
         },
         stop,
       });
+      addTo(barsBySymbol, symbol, listenerGuid);
     },
 
-    /** @param {string} listenerGuid */
-    unsubscribeBars(listenerGuid) {
-      barSubs.get(listenerGuid)?.stop();
-      barSubs.delete(listenerGuid);
-    },
+    unsubscribeBars,
 
     /** @param {(time: number) => void} callback */
     getServerTime(callback) {
@@ -187,6 +232,7 @@ export function createDatafeed(transport) {
      * @param {(data: QuoteData[]) => void} onRealtime @param {string} listenerGuid
      */
     subscribeQuotes(symbols, fastSymbols, onRealtime, listenerGuid) {
+      unsubscribeQuotes(listenerGuid); // keeps the reference counts right if an id is reused
       ensureOpen();
       const all = [...new Set([...symbols, ...fastSymbols])];
       for (const s of all) {
@@ -195,22 +241,12 @@ export function createDatafeed(transport) {
         if (count === 0) quoteStops.set(s, stream.subscribe(`quote:${s}`, { action: 'subscribe_quotes', symbols: [s] }, { action: 'unsubscribe_quotes', symbols: [s] }));
       }
       quoteSubs.set(listenerGuid, { symbols: all, onRealtime });
+      for (const s of all) addTo(quotesBySymbol, s, listenerGuid);
       const known = all.map((s) => lastQuotes.get(s)).filter((q) => q !== undefined);
       if (known.length) later(onRealtime, known);
     },
 
-    /** @param {string} listenerGuid */
-    unsubscribeQuotes(listenerGuid) {
-      const sub = quoteSubs.get(listenerGuid);
-      quoteSubs.delete(listenerGuid);
-      for (const s of sub?.symbols ?? []) {
-        const count = (quoteRefs.get(s) ?? 1) - 1;
-        if (count > 0) { quoteRefs.set(s, count); continue; }
-        quoteRefs.delete(s);
-        quoteStops.get(s)?.();
-        quoteStops.delete(s);
-      }
-    },
+    unsubscribeQuotes,
 
     /** The latest quote seen for a symbol, if any (widgets use it to render at once). @param {string} symbol */
     lastQuote: (symbol) => lastQuotes.get(symbol) ?? null,

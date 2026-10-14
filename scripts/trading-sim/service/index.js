@@ -17,11 +17,12 @@ import { createHub } from './hub.js';
  * @param {(data: import('../engine/store.js').StoreData) => void} [options.persist]
  * @param {(token: string) => import('./hub.js').Identity | null} options.verify
  * @param {(error: unknown) => void} [options.onError]
+ * @param {boolean} [options.journal]       record gateway and store changes for a database (server/db/)
  */
-export function createSimulation({ seed, now = () => Date.now(), startingBalance, storeData, persist, verify, onError }) {
+export function createSimulation({ seed, now = () => Date.now(), startingBalance, storeData, persist, verify, onError, journal = false }) {
   const market = createMarket({ seed });
-  const gateway = createGateway({ market, startingBalance });
-  const store = createStore({ data: storeData, persist, now });
+  const gateway = createGateway({ market, startingBalance, journal });
+  const store = createStore({ data: storeData, persist, now, journal });
   const router = createRouter({ market, gateway, store, now, onError });
   const hub = createHub({ market, gateway, router, verify, now });
   return { market, gateway, store, router, hub, now };

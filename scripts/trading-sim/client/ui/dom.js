@@ -45,13 +45,13 @@ export function append(parent, ...children) {
   return parent;
 }
 
-/** Remove every child. @param {Node} node */
+/** Remove every child (one DOM operation, not one per child). @param {Element | DocumentFragment} node */
 export function clear(node) {
-  while (node.firstChild) node.removeChild(node.firstChild);
+  node.replaceChildren();
   return node;
 }
 
-/** Replace the children of a node. @param {Node} node @param {...(Node | string | null | undefined | false)} children */
+/** Replace the children of a node. @param {Element | DocumentFragment} node @param {...(Node | string | null | undefined | false)} children */
 export function replace(node, ...children) {
   clear(node);
   return append(node, ...children);

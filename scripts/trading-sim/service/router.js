@@ -5,6 +5,15 @@
  *
  * Routes never trust the client for identity: `user` comes from the verified token. The chart
  * storage API carries client and user in the query, as in the spec; the user must match the token.
+ *
+ * handle() is synchronous and returns { status, body }: ApiError → its status, RangeError (bad
+ * input caught deeper down) → 400, anything else → 500 through onError. The server awaits the
+ * database flush after it returns (server/index.js), so routes never deal with storage.
+ *
+ * Costs worth knowing: /history is O(bars returned) (engine/market.js); /marks is O(log E + k)
+ * (gateway.executionsBetween); /news and /timescale_marks scan 4-hour bars over the range;
+ * /orders, /executions and /positions?status=closed return whole histories, O(n) — the place
+ * to add paging if histories grow large.
  */
 import { ApiError, SERVICES } from '../shared/protocol.js';
 import { SYMBOLS, EXCHANGES, SYMBOL_TYPES, getSymbol, toSymbolInfo, isOpen } from '../shared/symbols.js';
@@ -53,7 +62,7 @@ export function createRouter({ market, gateway, store, now, onError = (e) => con
     low: market.priceString(symbol, b.low), close: market.priceString(symbol, b.close), volume: market.qtyString(symbol, b.volume),
   });
 
-  /** The TradingView quote shape (spec §3 getQuotes). @param {string} name @param {number} t */
+  /** The TradingView quote shape (spec §3 getQuotes). O(K) per symbol (dayStats, book). @param {string} name @param {number} t */
   function quote(name, t) {
     const s = getSymbol(name);
     if (!s) return { n: name, s: 'error', v: {} };
@@ -80,7 +89,11 @@ export function createRouter({ market, gateway, store, now, onError = (e) => con
 
   // ------------------------------------------------------------------ market data
 
-  /** @param {string} method @param {string} path @param {Record<string, string>} q @param {string} user */
+  /**
+   * GET /marketdata/v1/… (spec §3, the TradingView datafeed). Times in the query are seconds;
+   * the engine works in milliseconds.
+   * @param {string} method @param {string} path @param {Record<string, string>} q @param {string} user
+   */
   function marketdata(method, path, q, user) {
     if (method !== 'GET') return null;
     const t = now();
@@ -133,8 +146,7 @@ export function createRouter({ market, gateway, store, now, onError = (e) => con
         const s = symbolOf(q.symbol);
         const from = int(q.from, 'from') * 1000;
         const to = int(q.to, 'to') * 1000;
-        return gateway.executions(user, t)
-          .filter((e) => e.symbol === s.name && e.time >= from && e.time <= to)
+        return gateway.executionsBetween(user, s.name, from, to, t)
           .map((e) => ({
             id: e.id, time: Math.floor(e.time / 1000), color: e.side === 'BUY' ? 'blue' : 'red',
             text: `${e.side === 'BUY' ? 'Bought' : 'Sold'} ${e.qty} at ${e.price}`, label: e.side === 'BUY' ? 'B' : 'S', labelFontColor: 'white', minSize: 14,
@@ -154,7 +166,10 @@ export function createRouter({ market, gateway, store, now, onError = (e) => con
 
   // ------------------------------------------------------------------ trading
 
-  /** @param {string} method @param {string} path @param {Record<string, string>} q @param {any} body @param {string} user */
+  /**
+   * /trade/v1/… (spec §4): a thin mapping from routes to gateway commands and snapshots.
+   * @param {string} method @param {string} path @param {Record<string, string>} q @param {any} body @param {string} user
+   */
   function trade(method, path, q, body, user) {
     const t = now();
     const parts = path.split('/').filter(Boolean);
@@ -184,7 +199,10 @@ export function createRouter({ market, gateway, store, now, onError = (e) => con
 
   // ------------------------------------------------------------------ chart storage
 
-  /** @param {string} method @param {string} path @param {Record<string, string>} q @param {any} body @param {string} user */
+  /**
+   * /charts-storage/1.1/… (spec §9, the TradingView save/load REST shape).
+   * @param {string} method @param {string} path @param {Record<string, string>} q @param {any} body @param {string} user
+   */
   function storage(method, path, q, body, user) {
     const client = required(q.client, 'client');
     const owner = required(q.user, 'user');

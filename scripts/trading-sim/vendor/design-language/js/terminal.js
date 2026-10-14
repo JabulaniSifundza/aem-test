@@ -11,6 +11,10 @@
  *   Menu        button[aria-haspopup=menu][aria-controls] opens .cme-tmenu; ↑/↓, Escape, outside click
  *   Dialog      [data-cme-close] inside a dialog.cme-tdialog closes it with that value
  * Safe to load more than once (a page script and a module import): it binds once.
+ * Event delegation: a few listeners on document handle every component, including ones added
+ * after load (apps render widgets dynamically), so nothing needs binding per component and the
+ * cost is constant per page, not per component. Each handler finds its component with
+ * closest(), which is O(depth of the clicked element).
  * Every change fires a bubbling "cme:change" CustomEvent (detail.type = stepper | segmented |
  * pills | switch | menu) on the component, like js/cme.js. Steppers also fire "input" on their input.
  */

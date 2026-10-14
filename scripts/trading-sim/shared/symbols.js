@@ -165,6 +165,8 @@ export function tzOffsetMinutes(timeZone, utcMs) {
  * @param {string} timeZone @param {number} dayIndex days since 1970-01-01 @param {number} hour @param {number} minute
  */
 function zonedTime(timeZone, dayIndex, hour, minute) {
+  // Treat the wall-clock time as UTC, subtract the zone's offset, then correct once with the
+  // offset at the result: the second pass matters only on daylight-saving change days.
   const wall = dayIndex * DAY_MS + (hour * 60 + minute) * 60_000;
   let utc = wall - tzOffsetMinutes(timeZone, wall) * 60_000;
   utc = wall - tzOffsetMinutes(timeZone, utc) * 60_000;
@@ -185,7 +187,12 @@ export function isTradingDay(s, dayIndex) {
   return weekday !== 0 && weekday !== 6;
 }
 
-/** @type {Map<string, {open: number, close: number}>} */
+/**
+ * Session times per calendar day. Intl formatting is slow (microseconds per call) and sessions
+ * are asked for constantly, so each day is worked out once. Grows by one entry per day touched:
+ * a few thousand entries at most.
+ * @type {Map<string, {open: number, close: number}>}
+ */
 const sessionCache = new Map();
 
 /**
