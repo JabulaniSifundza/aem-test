@@ -1,0 +1,4 @@
+@import url('../../styles/trading-sim.css');
+
+.markets { height: var(--trading-height, 360px); }
+.markets > .cme-terminal { height: 100%; }

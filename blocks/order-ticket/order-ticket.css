@@ -1,0 +1,4 @@
+@import url('../../styles/trading-sim.css');
+
+.order-ticket { height: var(--trading-height, 760px); }
+.order-ticket > .cme-terminal { height: 100%; }

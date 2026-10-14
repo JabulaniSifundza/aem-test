@@ -1,0 +1,76 @@
+/* Trading Simulator: layout glue the design language leaves to the application.
+   Colours, type and spacing are design-language tokens only (no raw values), so the light and
+   dark terminal themes apply here too. Component looks live in the design language. */
+
+html, body.ts-page { height: 100%; margin: 0; }
+body.ts-page { overflow: hidden; background: var(--color-terminal-canvas); }
+.cme-terminal [hidden] { display: none !important; }
+
+/* Boot and failure screens */
+.ts-boot { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: var(--terminal-space-3); }
+.ts-boot__title { margin: 0; font-size: var(--type-terminal-tab-size); line-height: var(--type-terminal-tab-line); font-weight: var(--weight-semibold); color: var(--color-terminal-text-strong); }
+.ts-boot__text { margin: 0; max-width: 48ch; text-align: center; color: var(--color-terminal-text-muted); }
+.ts-noscript { padding: var(--terminal-space-6); }
+
+/* Header extras */
+.ts-brand { font-weight: var(--weight-semibold); font-size: var(--type-terminal-tab-size); line-height: var(--type-terminal-tab-line); color: var(--color-terminal-text-strong); white-space: nowrap; }
+.ts-one-click { display: flex; align-items: center; gap: var(--terminal-space-2); }
+.ts-conn { display: inline-flex; align-items: center; gap: var(--terminal-space-2); white-space: nowrap; color: var(--color-terminal-text-muted); }
+.ts-conn::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--color-terminal-success); }
+.ts-conn[data-status="connecting"]::before { background: var(--color-terminal-info); }
+.ts-conn[data-status="disconnected"]::before { background: var(--color-terminal-error); }
+.ts-user { display: flex; align-items: center; gap: var(--terminal-space-4); padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+
+/* Widget hosts created by the dock */
+.ts-widget { min-height: 0; }
+.ts-stack { display: flex; flex-direction: column; gap: var(--terminal-space-5); }
+.ts-row-actions { display: flex; align-items: center; gap: var(--terminal-space-4); }
+.ts-spacer { flex: 1; }
+.ts-pad { padding: var(--terminal-space-5); }
+.ts-scroll { flex: 1; overflow: auto; }
+.ts-w-sm { width: 120px; }
+.ts-w-md { width: 160px; }
+.ts-note { height: auto; padding: var(--terminal-space-4); }
+.ts-ladder-position { grid-column: span 2; display: flex; align-items: center; gap: var(--terminal-space-4); }
+
+/* Where a dragged tab will land: the half of the panel it will take */
+.cme-panel[data-drop] { position: relative; }
+.cme-panel[data-drop]::after { content: ""; position: absolute; z-index: 20; pointer-events: none; background: var(--color-terminal-row-selected); opacity: 0.6; }
+.cme-panel[data-drop="center"]::after { inset: 0; }
+.cme-panel[data-drop="left"]::after { inset: 0 50% 0 0; }
+.cme-panel[data-drop="right"]::after { inset: 0 0 0 50%; }
+.cme-panel[data-drop="top"]::after { inset: 0 0 50% 0; }
+.cme-panel[data-drop="bottom"]::after { inset: 50% 0 0 0; }
+
+/* Price flashes in the markets and watchlist grids */
+@keyframes ts-flash-up { from { background: var(--color-terminal-volume-up); } }
+@keyframes ts-flash-down { from { background: var(--color-terminal-volume-down); } }
+.ts-flash-up { animation: ts-flash-up 0.6s ease-out; }
+.ts-flash-down { animation: ts-flash-down 0.6s ease-out; }
+@media (prefers-reduced-motion: reduce) { .ts-flash-up, .ts-flash-down { animation: none; } }
+
+/* Chart: the adapter's plot area, panes and overlays */
+.ts-chart-host { position: absolute; inset: 0; }
+.ts-chart { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; }
+.ts-chart__main { position: relative; flex: 1; min-height: 0; }
+.ts-chart__pane { position: relative; flex: none; border-top: var(--border-thin) solid var(--color-terminal-rule-soft); }
+.ts-chart__pane-legend { top: var(--terminal-space-2); flex-direction: row; align-items: center; }
+.ts-chart__pane-values { display: inline-flex; gap: var(--terminal-space-3); font-family: var(--type-terminal-num-family); }
+.ts-chart__cross-price, .ts-chart__cross-time { position: absolute; z-index: 5; pointer-events: none; }
+.ts-chart__cross-time { transform: translateX(-50%); }
+.ts-chart__yaxis { position: absolute; top: 0; right: 0; z-index: 3; cursor: ns-resize; }
+.ts-chart--drawing .u-over { cursor: crosshair; }
+.ts-chart .u-over:focus-visible { outline: var(--border-medium) solid var(--color-action-focus-ring); outline-offset: -2px; }
+.ts-chart .u-cursor-x { border-right: var(--border-thin) dashed var(--color-terminal-chart-axis); }
+.ts-chart .u-cursor-y { border-bottom: var(--border-thin) dashed var(--color-terminal-chart-axis); }
+.ts-chart .u-select { background: var(--color-terminal-row-selected); }
+.cme-tchart__plot .cme-chart-legend { max-width: calc(100% - 96px); }
+.ts-chart-trade { display: flex; align-items: center; gap: var(--terminal-space-4); }
+.ts-chart-qty { width: 120px; }
+.ts-chart-legend__series { display: flex; flex-direction: column; gap: var(--terminal-space-1); }
+.ts-chart-legend__series .cme-chart-legend__series { align-items: center; }
+.ts-swatch { width: 10px; height: 2px; flex: none; }
+.ts-chart-clock { font-family: var(--type-terminal-num-family); color: var(--color-terminal-text-muted); }
+
+/* The floating order ticket */
+.ts-ticket-dialog { width: var(--terminal-ticket); padding: 0; }

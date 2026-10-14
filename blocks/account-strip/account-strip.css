@@ -1,0 +1,3 @@
+@import url('../../styles/trading-sim.css');
+
+.account-strip > .cme-terminal { height: auto; }

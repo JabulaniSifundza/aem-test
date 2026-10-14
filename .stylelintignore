@@ -1,2 +1,4 @@
 # vendored from the CME design-language package (copied unchanged)
 styles/cme/
+# generated from the trading-sim repository
+scripts/trading-sim/

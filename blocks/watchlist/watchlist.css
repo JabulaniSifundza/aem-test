@@ -1,0 +1,4 @@
+@import url('../../styles/trading-sim.css');
+
+.watchlist { height: var(--trading-height, 360px); }
+.watchlist > .cme-terminal { height: 100%; }

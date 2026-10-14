@@ -1,0 +1,4 @@
+@import url('../../styles/trading-sim.css');
+
+.account-manager { height: var(--trading-height, 380px); }
+.account-manager > .cme-terminal { height: 100%; }
