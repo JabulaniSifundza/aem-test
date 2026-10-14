@@ -1,2 +1,4 @@
 helix-importer-ui
 *.min.js
+# generated from the trading-sim repository (linted there)
+scripts/trading-sim/

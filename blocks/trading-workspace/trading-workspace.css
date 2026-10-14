@@ -1,0 +1,15 @@
+@import url('../../styles/trading-sim.css');
+
+/* The whole simulator, full width under the site header (the section keeps its own width) */
+.trading-workspace {
+  width: 100vw;
+  height: var(--trading-height, calc(100dvh - var(--navbar-height-mobile)));
+  min-height: 640px;
+  margin-inline: calc(50% - 50vw);
+}
+
+@media (width >= 993px) {
+  .trading-workspace { height: var(--trading-height, calc(100dvh - var(--navbar-height))); }
+}
+
+.trading-workspace > .cme-terminal { height: 100%; }

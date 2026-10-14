@@ -1,0 +1,4 @@
+@import url('../../styles/trading-sim.css');
+
+.trade-chart { height: var(--trading-height, 560px); }
+.trade-chart > .cme-terminal { height: 100%; }

@@ -1,0 +1,9 @@
+/*
+ * Trading simulator blocks: the design language's terminal layer (1.2.x), its fonts, uPlot's
+ * stylesheet and the simulator's layout glue, all from /scripts/trading-sim/ (generated).
+ * Each trading block's stylesheet imports this file; the browser loads it once.
+ */
+@import url('../scripts/trading-sim/vendor/design-language/fonts/terminal-fonts.css');
+@import url('../scripts/trading-sim/vendor/design-language/css/terminal.css');
+@import url('../scripts/trading-sim/vendor/uplot.min.css');
+@import url('../scripts/trading-sim/app.css');

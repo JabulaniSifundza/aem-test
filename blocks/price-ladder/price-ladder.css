@@ -1,0 +1,4 @@
+@import url('../../styles/trading-sim.css');
+
+.price-ladder { height: var(--trading-height, 640px); }
+.price-ladder > .cme-terminal { height: 100%; }
