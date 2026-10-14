@@ -57,7 +57,7 @@ function contextFor(services, root, openWidget) {
 }
 
 /**
- * Make an element a terminal root that follows the theme setting.
+ * Make an element a terminal root that follows the theme setting; the page follows it too.
  * @param {HTMLElement} root @param {AppContext} ctx
  */
 function bindTheme(root, ctx) {
@@ -66,6 +66,9 @@ function bindTheme(root, ctx) {
   const apply = (theme) => {
     root.dataset.theme = theme;
     root.classList.toggle('cme-inverse', theme === 'dark');
+    // The page around the terminal follows it (design language 1.2.3 page-dark theme), so a
+    // dark terminal on an EDS page does not sit between a white header and footer.
+    document.documentElement.dataset.cmeTheme = theme;
   };
   apply(ctx.settings.theme);
   ctx.on('theme', apply);

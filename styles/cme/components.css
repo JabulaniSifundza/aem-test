@@ -543,6 +543,19 @@ a.cme-event-card:hover { text-decoration: none; border-color: var(--color-border
 }
 
 /* =========================================================
+   14b. DARK PAGE (1.2.3): <html data-cme-theme="dark">
+   The colour tokens switch under theme.page-dark (tokens.json); these rules cover the few
+   places that use a fixed colour. Used when a page hosts the dark trading terminal.
+   ========================================================= */
+:root[data-cme-theme="dark"] { color-scheme: dark; }
+:root[data-cme-theme="dark"] .cme-header { box-shadow: 0 1px 0 var(--color-border-inverse-subtle); }
+:root[data-cme-theme="dark"] .cme-header__logo { color: var(--white); }
+:root[data-cme-theme="dark"] .cme-header__icon-btn { color: var(--color-text-nav); }
+:root[data-cme-theme="dark"] .cme-btn--secondary-neutral { border-color: var(--gray4); color: var(--gray4); }
+:root[data-cme-theme="dark"] .cme-card--horizontal .cme-card__title,
+:root[data-cme-theme="dark"] .cme-input, :root[data-cme-theme="dark"] .cme-select, :root[data-cme-theme="dark"] .cme-textarea { color: var(--color-text-heading); }
+
+/* =========================================================
    15. STATE OVERRIDES (keep last)
    ========================================================= */
 .cme-stat__value.cme-gain, .cme-market-card__value.cme-gain { color: var(--ctx-gain); }
