@@ -622,3 +622,40 @@
   --color-terminal-error: var(--loss-light);
   --color-terminal-info: var(--blue5);
 }
+
+/* Theme: page-dark */
+:root[data-cme-theme="dark"] {
+  --color-text-heading: var(--white);
+  --color-text-body: var(--gray4);
+  --color-text-data: var(--gray5);
+  --color-text-disabled: var(--gray3);
+  --color-text-link: var(--blue5);
+  --color-text-eyebrow: var(--citron);
+  --color-text-nav: var(--gray5);
+  --color-text-status: var(--blue5);
+  --color-text-status-alert: var(--loss-light);
+  --color-surface-page: var(--blue1);
+  --color-surface-subtle: var(--blue2);
+  --color-surface-control: var(--navy1);
+  --color-surface-legal: var(--blue0);
+  --color-border-subtle: var(--navy2);
+  --color-border-strong: var(--gray3);
+  --color-border-emphasis: var(--gray4);
+  --color-action-disabled: var(--navy1);
+  --color-data-gain: var(--green-positive);
+  --color-data-loss: var(--loss-light);
+  --color-data-neutral: var(--gray4);
+  --color-status-success-bg: var(--navy1);
+  --color-status-success-fg: var(--green-positive);
+  --color-status-error-bg: var(--navy1);
+  --color-status-error-fg: var(--loss-light);
+  --color-status-notice-bg: var(--navy1);
+  --color-status-info-bg: var(--navy1);
+  --color-status-neutral-bg: var(--blue2);
+  --color-status-warning-bg: var(--navy1);
+  --color-status-critical-bg: var(--navy1);
+  --color-chart-axis: var(--gray4);
+  --color-chart-grid: var(--navy1);
+  --color-chart-panel: var(--blue2);
+  --color-chart-tooltip: var(--blue2);
+}
