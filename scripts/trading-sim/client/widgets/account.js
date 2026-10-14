@@ -2,7 +2,7 @@
  * Account widgets (spec §7, requirements AC-2 to AC-7, B-8, UI-4): positions, orders, executions
  * and the trade log. They read the broker's cache and redraw on the host's events.
  */
-import { el, iconButton } from '../ui/dom.js';
+import { el, iconButton, frameFor } from '../ui/dom.js';
 import { dialog, confirm, openMenu, toast, segmented, switchField, stepper, field } from '../ui/feedback.js';
 import { formatPrice, formatQty, formatMoney, formatDateTime, signClass, LABELS } from '../ui/format.js';
 import { createGrid, cancelOrder, errorText, symbolDef } from './common.js';
@@ -28,12 +28,13 @@ function pills(label, values, value, onChange) {
 /**
  * Subscribe to host events, coalesced to one call per animation frame: a burst of events (a
  * fill brings an order, a position, an execution and an equity event) redraws once.
- * Returns one stop function.
- * @param {AppContext} ctx @param {Array<keyof import('../broker/host.js').HostEvents>} events @param {() => void} fn
+ * Returns one stop function. Frames come from the window showing `node` (the widget's container),
+ * which is a pop-out window's when the widget is popped out.
+ * @param {AppContext} ctx @param {HTMLElement} node @param {Array<keyof import('../broker/host.js').HostEvents>} events @param {() => void} fn
  */
-function onHost(ctx, events, fn) {
+function onHost(ctx, node, events, fn) {
   let queued = false;
-  const run = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; fn(); }); };
+  const run = () => { if (queued) return; queued = true; frameFor(node, () => { queued = false; fn(); }); };
   const stops = events.map((e) => ctx.host.on(e, run));
   return () => stops.forEach((s) => s());
 }
@@ -174,7 +175,7 @@ export function positionsWidget(ctx) {
         }
       };
       const loadClosed = async () => { closed = await ctx.broker.closedPositions(); draw(); };
-      const stops = [onHost(ctx, ['position', 'reset'], () => { loadClosed(); }), onHost(ctx, ['pl', 'equity'], refreshPl)];
+      const stops = [onHost(ctx, container, ['position', 'reset'], () => { loadClosed(); }), onHost(ctx, container, ['pl', 'equity'], refreshPl)];
       loadClosed();
       return { destroy() { stops.forEach((s) => s()); }, state: () => ({ filter }) };
     },
@@ -268,7 +269,7 @@ export function ordersWidget(ctx) {
         // Reversing first makes the list nearly sorted, so the sort is linear in practice.
         grid.setRows(all.filter(ORDER_FILTERS[filter] ?? ORDER_FILTERS.All).reverse().sort((a, b) => b.createdAt - a.createdAt));
       }
-      const stop = onHost(ctx, ['order', 'reset'], draw);
+      const stop = onHost(ctx, container, ['order', 'reset'], draw);
       draw();
       return { destroy: stop, state: () => ({ filter }) };
     },
@@ -298,7 +299,7 @@ export function executionsWidget(ctx) {
       });
       container.append(grid.node);
       const draw = async () => grid.setRows(await ctx.broker.executions());
-      const stop = onHost(ctx, ['execution', 'reset'], draw);
+      const stop = onHost(ctx, container, ['execution', 'reset'], draw);
       draw();
       return { destroy: stop };
     },
@@ -375,7 +376,7 @@ export function tradeLogWidget(ctx) {
         grid.setRows(rows);
       }
       ctx.records.load('trade-notes', /** @type {Record<string, string>} */ ({})).then((n) => { notes = n; draw(); });
-      const stop = onHost(ctx, ['execution', 'reset'], draw);
+      const stop = onHost(ctx, container, ['execution', 'reset'], draw);
       return { destroy: stop, state: () => ({ period, product }) };
     },
   };

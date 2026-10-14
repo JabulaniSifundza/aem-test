@@ -19,7 +19,7 @@
  *   y range                     O(v · lines), no temporary arrays
  */
 import uPlot from '../../../vendor/uplot.js';
-import { el, icon } from '../../ui/dom.js';
+import { el, icon, frameFor } from '../../ui/dom.js';
 import { getIndicator } from '../indicators/index.js';
 import { niceTicks, logTicks, indexOfTime, timeOfIndex, timeLabel, timeFull, visibleRange, heikinAshi, heikinAshiBar } from '../scale.js';
 import { DEFAULT_STATE } from '../adapter.js';
@@ -511,11 +511,13 @@ export function createUplotChart({ container, formatPrice, roundPrice, tick, sta
     maybeNeedHistory();
   }
 
-  let frame = 0;
-  /** Redraw once on the next frame (live ticks arrive faster than the screen refreshes). */
+  /** Cancels the pending redraw, or null when none is pending. @type {(() => void) | null} */
+  let frame = null;
+  /** Redraw once on the next frame (live ticks arrive faster than the screen refreshes); the frame
+   *  comes from the window showing the chart, which is a pop-out window's when it is popped out. */
   function schedule() {
     if (frame) return;
-    frame = requestAnimationFrame(() => { frame = 0; apply(); });
+    frame = frameFor(root, () => { frame = null; apply(); });
   }
 
   function maybeNeedHistory() {
@@ -959,7 +961,7 @@ export function createUplotChart({ container, formatPrice, roundPrice, tick, sta
       return () => { set.delete(cb); };
     },
     destroy() {
-      cancelAnimationFrame(frame);
+      frame?.();
       ro.disconnect();
       destroyPlots();
       root.remove();

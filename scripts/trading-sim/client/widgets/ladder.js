@@ -14,7 +14,7 @@
  *   cell's order buttons are rebuilt only when its orders change.
  * Per draw: O(R + W) for R visible rows and W working orders on the symbol.
  */
-import { el, iconButton, icon } from '../ui/dom.js';
+import { el, iconButton, icon, frameFor } from '../ui/dom.js';
 import { dialog, confirm, toast, segmented, switchField, stepper, field } from '../ui/feedback.js';
 import { formatPrice, formatQty, formatMoney, signClass } from '../ui/format.js';
 import { D } from '../../shared/decimal.js';
@@ -46,7 +46,8 @@ export function ladderWidget(ctx) {
       let follow = true;
       let depthId = '';
       let stopQuotes = () => {};
-      let frame = 0;
+      /** Cancels the pending redraw, or null (frameFor: the frame of the window showing the ladder). @type {(() => void) | null} */
+      let frame = null;
 
       // ---------------------------------------------------------------- price <-> tick index
       const tickD = () => D(s.tick);
@@ -133,9 +134,9 @@ export function ladderWidget(ctx) {
       /** @type {import('../broker/host.js').Position | null} */
       let position = null;
 
-      function schedule() { if (!frame) frame = requestAnimationFrame(draw); }
+      function schedule() { if (!frame) frame = frameFor(rows, draw); }
       function draw() {
-        frame = 0;
+        frame = null;
         buildRows();
         const last = quote.lp ? toIndex(quote.lp) : null;
         const bestAsk = asks.size ? Math.min(...asks.keys()) : null;
@@ -301,7 +302,7 @@ export function ladderWidget(ctx) {
         ctx.host.on('pl', () => { ctx.broker.positions().then((ps) => { position = ps.find((p) => p.symbol === symbol) ?? null; schedule(); }); })];
       subscribe();
       return {
-        destroy() { stops.forEach((x) => x()); stopQuotes(); if (depthId) ctx.broker.unsubscribeDepth(depthId); cancelAnimationFrame(frame); ro.disconnect(); },
+        destroy() { stops.forEach((x) => x()); stopQuotes(); if (depthId) ctx.broker.unsubscribeDepth(depthId); frame?.(); ro.disconnect(); },
         resize: schedule,
         show: schedule,
         state: () => ({ symbol, tif: tif.value, qty: qtyValue(), settings: { ...settings } }),
