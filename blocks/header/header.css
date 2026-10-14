@@ -1,2 +1,12 @@
 /* Header styling comes from styles/cme/components.css (.cme-header). */
 header .header .cme-header { position: static; }
+
+/* Dark page (design language 1.2.3, set by the trading simulator's dark theme): the logo's
+   wordmark turns white; the globe keeps its blue */
+/* stylelint-disable selector-class-pattern -- design-language BEM class names */
+:root[data-cme-theme="dark"] header .header .cme-header__logo {
+  background: url('../../icons/logo-cme-group-inverse.svg') no-repeat left center / contain;
+}
+
+:root[data-cme-theme="dark"] header .header .cme-header__logo img { visibility: hidden; }
+/* stylelint-enable selector-class-pattern */
