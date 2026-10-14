@@ -5,6 +5,7 @@
  */
 import { createTransport, urlsFromBase } from './transport.js';
 import { createDevTokenSource } from './tokens.js';
+import { createAutoPort } from './auto-port.js';
 
 export const LOOPBACK_ORIGIN = 'http://loopback.invalid';
 
@@ -17,7 +18,7 @@ export const LOOPBACK_ORIGIN = 'http://loopback.invalid';
 
 /**
  * @param {object} [options]
- * @param {Port} [options.port]       defaults to a new module Worker running loopback-worker.js
+ * @param {Port} [options.port]       defaults to a Worker running loopback-worker.js, or the page thread where Workers are not allowed
  * @param {string} [options.seed]
  * @param {number} [options.start]    simulated start time (ms)
  * @param {string} [options.startingBalance]
@@ -25,7 +26,7 @@ export const LOOPBACK_ORIGIN = 'http://loopback.invalid';
  * @param {object} [options.socketOptions]
  */
 export function createLoopbackTransport({ port, seed, start, startingBalance, user = 'local', socketOptions } = {}) {
-  const worker = port ?? /** @type {Port} */ (/** @type {unknown} */ (new Worker(new URL('./loopback-worker.js', import.meta.url), { type: 'module' })));
+  const worker = port ?? createAutoPort();
   worker.postMessage({ kind: 'init', seed, start, startingBalance });
 
   let nextId = 1;

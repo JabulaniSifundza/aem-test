@@ -16,6 +16,7 @@ import { readBlockConfig, getMetadata, toClassName } from './aem.js';
  *   Height     the block's height in pixels
  *   Symbol     BTCUSDT, ETHUSDT, SOLUSDT, SPY or QQQ
  *   Resolution 1, 5, 15, 30, 60, 240, 1D, 1W or 1M (charts)
+ *   Start      a simulated start time (ISO date and time), for demos and tests
  * Page metadata "trading-api", "trading-seed" and "trading-theme" set page-wide defaults.
  */
 
@@ -23,6 +24,25 @@ const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'SPY', 'QQQ'];
 const RESOLUTIONS = ['1', '5', '15', '30', '60', '240', '1D', '1W', '1M'];
 
 let servicesPromise = null;
+
+/**
+ * Resolves once the page has loaded and the browser is idle, so the simulator never delays the
+ * page's first paint or its other blocks.
+ */
+const afterLoad = () => new Promise((resolve) => {
+  const idle = () => {
+    if (window.requestIdleCallback) window.requestIdleCallback(() => resolve(), { timeout: 1500 });
+    else setTimeout(resolve, 0);
+  };
+  if (document.readyState === 'complete') idle();
+  else window.addEventListener('load', idle, { once: true });
+});
+
+/** Gives the browser a turn (input, paint) before the next piece of work. */
+const yieldToMain = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+
+/** Blocks mount one at a time, each in its own task, so no single task holds the page. */
+let mountQueue = Promise.resolve();
 
 /** The shell module, loaded once. */
 const shell = () => import('./trading-sim/client/shell.js');
@@ -45,6 +65,7 @@ export function readTradingConfig(block) {
     api: text('api') || getMetadata('trading-api') || null,
     user: text('user') || 'demo',
     seed: text('seed') || getMetadata('trading-seed') || undefined,
+    start: Number.isFinite(Date.parse(text('start'))) ? Date.parse(text('start')) : undefined,
     theme: theme === 'dark' ? 'dark' : 'light',
     height: height >= 200 && height <= 2000 ? height : null,
     symbol: SYMBOLS.includes(symbol) ? symbol : 'BTCUSDT',
@@ -64,8 +85,10 @@ export function tradingServices(config) {
       api: config.api,
       user: config.user,
       seed: config.seed,
+      start: config.start,
       theme: config.theme,
-      inPage: true, // the page's Content Security Policy does not allow module Workers
+      // The market runs in a Worker (head.html allows same-origin workers), or on the page
+      // thread if the Content Security Policy does not allow it.
     }));
   }
   return servicesPromise;
@@ -76,7 +99,7 @@ export function tradingServices(config) {
  * @param {Element} block
  * @param {(root: HTMLElement, services: object, config: object, sim: object) => unknown} mount
  */
-export async function decorateTradingBlock(block, mount) {
+export function decorateTradingBlock(block, mount) {
   const config = readTradingConfig(block);
   const root = document.createElement('div');
   root.className = 'cme-terminal';
@@ -89,14 +112,21 @@ export async function decorateTradingBlock(block, mount) {
   status.textContent = 'Starting the trading simulator…';
   root.append(status);
   block.replaceChildren(root);
-  try {
-    const [services, sim] = await Promise.all([tradingServices(config), shell()]);
-    await mount(root, services, config, sim);
-  } catch (error) {
-    status.textContent = `The trading simulator could not start: ${error.message}. Reload the page to try again.`;
-    // eslint-disable-next-line no-console
-    console.error(error);
-  }
+  // Not awaited: EDS shows the page once the first section's blocks have decorated, so the
+  // simulator starts after that, in the background, instead of holding up the first paint.
+  (async () => {
+    try {
+      await afterLoad();
+      const [services, sim] = await Promise.all([tradingServices(config), shell()]);
+      const turn = mountQueue.then(yieldToMain).then(() => mount(root, services, config, sim));
+      mountQueue = turn.catch(() => {});
+      await turn;
+    } catch (error) {
+      status.textContent = `The trading simulator could not start: ${error.message}. Reload the page to try again.`;
+      // eslint-disable-next-line no-console
+      console.error(error);
+    }
+  })();
 }
 
 /**
