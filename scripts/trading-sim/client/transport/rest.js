@@ -1,6 +1,10 @@
 /**
  * A small fetch wrapper for one REST service: base URL, bearer token, JSON in and out, and
  * errors as ApiError with the server's message.
+ *
+ * A 401 is retried once after onUnauthorized() (which drops the cached token), so a server
+ * restart that invalidated every token costs one extra round trip instead of an error. Every
+ * request has a timeout (default 15 s) combined with the caller's own abort signal.
  */
 import { ApiError } from '../../shared/protocol.js';
 
@@ -18,13 +22,16 @@ import { ApiError } from '../../shared/protocol.js';
  * @param {() => Promise<string>} options.getToken
  * @param {typeof fetch} [options.fetchImpl]
  * @param {number} [options.timeoutMs]
+ * @param {() => void} [options.onUnauthorized]  called before the one retry of a 401
  */
-export function createRestClient({ baseUrl, getToken, fetchImpl = (...a) => fetch(...a), timeoutMs = 15_000 }) {
+export function createRestClient({ baseUrl, getToken, fetchImpl = (...a) => fetch(...a), timeoutMs = 15_000, onUnauthorized }) {
   /**
    * @param {string} method @param {string} path @param {RequestOptions} [options]
+   * @param {boolean} [retried]
    * @returns {Promise<any>}
    */
-  async function request(method, path, { query, body, form, signal } = {}) {
+  async function request(method, path, options = {}, retried = false) {
+    const { query, body, form, signal } = options;
     const url = new URL(baseUrl.replace(/\/$/, '') + path);
     for (const [k, v] of Object.entries(query ?? {})) if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
     /** @type {Record<string, string>} */
@@ -43,6 +50,10 @@ export function createRestClient({ baseUrl, getToken, fetchImpl = (...a) => fetc
     const text = await response.text();
     let data;
     try { data = text ? JSON.parse(text) : null; } catch { data = { message: text }; }
+    if (response.status === 401 && onUnauthorized && !retried) {
+      onUnauthorized();
+      return request(method, path, options, true);
+    }
     if (!response.ok) throw new ApiError(response.status, data?.code ?? 'error', data?.message ?? `Request failed (${response.status})`);
     return data;
   }

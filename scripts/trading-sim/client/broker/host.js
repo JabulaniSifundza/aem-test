@@ -2,6 +2,9 @@
  * The broker's host: what the TradingView library calls IBrokerConnectionAdapterHost.
  * The broker reports changes to it (orderUpdate, positionUpdate, …); widgets subscribe to it.
  * With the licensed library, the library provides its own host and the same broker plugs in.
+ *
+ * A tiny typed event bus: listeners per event name in a Set (O(1) add/remove), and a throwing
+ * listener is logged without stopping the others.
  */
 
 /** @typedef {import('../../engine/orders.js').Order} Order */

@@ -6,6 +6,12 @@
  * The layout is plain data (DockState) so a workspace can be saved and restored. Widgets are
  * created once and moved between panels without being rebuilt, so a chart keeps its state when its
  * tab is dragged.
+ *
+ * render() rebuilds the panel frames (tabs, sashes) from the layout tree and re-attaches the
+ * existing widget elements; it never re-creates widgets. Tree operations walk the layout, O(panels),
+ * and a workspace has a handful of panels, so simplicity wins over indexes here. onChange is
+ * called with the new DockState after every change, and the shell saves it (debounced) as the
+ * workspace.
  */
 import { el, icon, iconButton, clear, uid } from './dom.js';
 

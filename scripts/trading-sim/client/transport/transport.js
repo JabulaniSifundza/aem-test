@@ -44,14 +44,15 @@ export function urlsFromBase(base) {
  */
 export function createTransport({ urls, tokens, fetchImpl, WebSocketImpl, socketOptions = {} }) {
   const getToken = () => tokens.getToken();
+  const onUnauthorized = () => tokens.invalidate?.();
   const rest = {
-    marketdata: createRestClient({ baseUrl: urls.marketDataUrl, getToken, fetchImpl }),
-    trade: createRestClient({ baseUrl: urls.tradeUrl, getToken, fetchImpl }),
-    storage: createRestClient({ baseUrl: urls.chartsStorageUrl, getToken, fetchImpl }),
+    marketdata: createRestClient({ baseUrl: urls.marketDataUrl, getToken, fetchImpl, onUnauthorized }),
+    trade: createRestClient({ baseUrl: urls.tradeUrl, getToken, fetchImpl, onUnauthorized }),
+    storage: createRestClient({ baseUrl: urls.chartsStorageUrl, getToken, fetchImpl, onUnauthorized }),
   };
   const streams = {
-    marketdata: createSocket({ url: urls.marketDataStream, getToken, WebSocketImpl, ...socketOptions }),
-    trade: createSocket({ url: urls.tradeStream, getToken, WebSocketImpl, ...socketOptions }),
+    marketdata: createSocket({ url: urls.marketDataStream, getToken, WebSocketImpl, onUnauthorized, ...socketOptions }),
+    trade: createSocket({ url: urls.tradeStream, getToken, WebSocketImpl, onUnauthorized, ...socketOptions }),
   };
   const stopRefresh = tokens.onRefresh((token) => {
     streams.marketdata.reauthenticate(token);

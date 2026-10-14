@@ -41,7 +41,7 @@ export function logTicks(min, max, count) {
 
 /**
  * The index of the bar at or before `time` (ms); fractional beyond either end, so drawings
- * anchored past the last bar keep their place as new bars arrive.
+ * anchored past the last bar keep their place as new bars arrive. Binary search: O(log n).
  * @param {Array<{ time: number }>} bars @param {number} time
  */
 export function indexOfTime(bars, time) {
@@ -79,11 +79,19 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 
 /** @type {Map<string, Intl.DateTimeFormat>} */
 const zoneFormats = new Map();
+/** Recent results: axis labels ask for the same few dozen times on every redraw. @type {Map<string, ReturnType<typeof zoned>>} */
+const zonedCache = new Map();
 /**
- * Calendar fields of a time in a time zone.
+ * Calendar fields of a time in a time zone. Intl's formatToParts costs microseconds, and labels
+ * are drawn every frame while the chart moves, so results are memoised (bounded).
  * @param {number} time @param {TimeZone} tz
+ * @returns {{ year: number, month: number, day: number, hour: number, minute: number }}
  */
 export function zoned(time, tz) {
+  const key = `${tz}|${time}`;
+  const hit = zonedCache.get(key);
+  if (hit) return hit;
+  if (zonedCache.size > 2048) zonedCache.clear();
   let f = zoneFormats.get(tz);
   if (!f) {
     f = new Intl.DateTimeFormat('en-US', { timeZone: tz === 'local' ? undefined : tz, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' });
@@ -92,7 +100,9 @@ export function zoned(time, tz) {
   /** @type {Record<string, number>} */
   const v = {};
   for (const part of f.formatToParts(new Date(time))) if (part.type !== 'literal') v[part.type] = Number(part.value);
-  return { year: v.year, month: v.month - 1, day: v.day, hour: v.hour % 24, minute: v.minute };
+  const out = { year: v.year, month: v.month - 1, day: v.day, hour: v.hour % 24, minute: v.minute };
+  zonedCache.set(key, out);
+  return out;
 }
 
 /**
@@ -138,7 +148,19 @@ export function visibleRange(bars, a, b, extra = []) {
 }
 
 /**
- * Heikin-Ashi bars from ordinary bars (a chart type in the simulator's style menu).
+ * One Heikin-Ashi bar from an ordinary bar and the Heikin-Ashi bar before it (null for the first).
+ * Each HA bar depends only on its predecessor, so a live update of the last bar is O(1).
+ * @template {{ time: number, open: number, high: number, low: number, close: number, volume: number }} B
+ * @param {B | null} prev @param {B} b @returns {B}
+ */
+export function heikinAshiBar(prev, b) {
+  const close = (b.open + b.high + b.low + b.close) / 4;
+  const open = prev ? (prev.open + prev.close) / 2 : (b.open + b.close) / 2;
+  return { ...b, open, close, high: Math.max(b.high, open, close), low: Math.min(b.low, open, close) };
+}
+
+/**
+ * Heikin-Ashi bars from ordinary bars (a chart type in the simulator's style menu). O(n).
  * @template {{ time: number, open: number, high: number, low: number, close: number, volume: number }} B
  * @param {B[]} bars
  * @returns {B[]}
@@ -146,11 +168,6 @@ export function visibleRange(bars, a, b, extra = []) {
 export function heikinAshi(bars) {
   /** @type {B[]} */
   const out = [];
-  for (let i = 0; i < bars.length; i += 1) {
-    const b = bars[i];
-    const close = (b.open + b.high + b.low + b.close) / 4;
-    const open = i === 0 ? (b.open + b.close) / 2 : (out[i - 1].open + out[i - 1].close) / 2;
-    out.push({ ...b, open, close, high: Math.max(b.high, open, close), low: Math.min(b.low, open, close) });
-  }
+  for (let i = 0; i < bars.length; i += 1) out.push(heikinAshiBar(i === 0 ? null : out[i - 1], bars[i]));
   return out;
 }

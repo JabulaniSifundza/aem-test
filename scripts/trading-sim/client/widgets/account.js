@@ -25,7 +25,12 @@ function pills(label, values, value, onChange) {
   return node;
 }
 
-/** Subscribe to host events; returns one stop function. @param {AppContext} ctx @param {Array<keyof import('../broker/host.js').HostEvents>} events @param {() => void} fn */
+/**
+ * Subscribe to host events, coalesced to one call per animation frame: a burst of events (a
+ * fill brings an order, a position, an execution and an equity event) redraws once.
+ * Returns one stop function.
+ * @param {AppContext} ctx @param {Array<keyof import('../broker/host.js').HostEvents>} events @param {() => void} fn
+ */
 function onHost(ctx, events, fn) {
   let queued = false;
   const run = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; fn(); }); };
@@ -143,6 +148,8 @@ export function positionsWidget(ctx) {
       } }, 'Flatten all positions');
       container.append(el('div', { class: 'cme-panel__toolbar' }, pills('Show positions', ['All', 'Open', 'Closed'], filter, (v) => { filter = v; api.setParams({ filter }); draw(); }), el('span', { class: 'cme-terminal-header__spacer' }), flatten), grid.node);
 
+      // A signature of what the rows show apart from prices: when only P&L moved, the grid is
+      // left alone and refreshPl patches the price cells (no rebuild, focus kept).
       let lastOpenKeys = '';
       async function draw() {
         const open = (await ctx.broker.positions()).map((p) => ({ ...p, key: p.id }));
@@ -227,7 +234,8 @@ export function ordersWidget(ctx) {
     create(container, params, api) {
       let filter = params.filter ?? 'All';
       const grid = createGrid({
-        caption: 'Orders', empty: 'No orders to display', rowKey: (o) => o.id,
+        // Orders are replaced, never mutated, when they change: the object is its own version.
+        caption: 'Orders', empty: 'No orders to display', rowKey: (o) => o.id, rowVersion: (o) => o,
         columns: [
           { id: 'id', label: 'Order ID', cell: (o) => o.id, sortValue: (o) => o.id },
           { id: 'time', label: 'Time', cell: (o) => formatDateTime(o.createdAt), sortValue: (o) => o.createdAt },
@@ -255,9 +263,10 @@ export function ordersWidget(ctx) {
       } }, 'Cancel all');
       container.append(el('div', { class: 'cme-panel__toolbar' }, pills('Show orders', Object.keys(ORDER_FILTERS), filter, (v) => { filter = v; api.setParams({ filter }); draw(); }), el('span', { class: 'cme-terminal-header__spacer' }), cancelAll), grid.node);
       async function draw() {
-        const all = await ctx.broker.orders();
+        const all = await ctx.broker.orders(); // id order = creation order, oldest first
         cancelAll.disabled = !all.some((o) => isLive(o) && o.parentType === null);
-        grid.setRows(all.filter(ORDER_FILTERS[filter] ?? ORDER_FILTERS.All).sort((a, b) => b.createdAt - a.createdAt));
+        // Reversing first makes the list nearly sorted, so the sort is linear in practice.
+        grid.setRows(all.filter(ORDER_FILTERS[filter] ?? ORDER_FILTERS.All).reverse().sort((a, b) => b.createdAt - a.createdAt));
       }
       const stop = onHost(ctx, ['order', 'reset'], draw);
       draw();
@@ -274,7 +283,7 @@ export function executionsWidget(ctx) {
     kind: 'executions', icon: 'executions', title: () => 'Executions',
     create(container) {
       const grid = createGrid({
-        caption: 'Executions', empty: 'No executions yet', rowKey: (x) => x.id,
+        caption: 'Executions', empty: 'No executions yet', rowKey: (x) => x.id, rowVersion: (x) => x,
         columns: [
           { id: 'id', label: 'Execution ID', cell: (x) => x.id },
           { id: 'order', label: 'Order ID', cell: (x) => x.orderId },
@@ -356,6 +365,7 @@ export function tradeLogWidget(ctx) {
       } }, 'Download CSV');
       container.append(el('div', { class: 'cme-panel__toolbar' }, periodSel, productSel, el('span', { class: 'cme-terminal-header__spacer' }), download), grid.node);
 
+      // O(orders + executions) per fill: the order lookup gives each fill its type, price and TIF.
       async function draw() {
         const all = await ctx.broker.executions();
         orders = new Map((await ctx.broker.orders()).map((o) => [o.id, o]));

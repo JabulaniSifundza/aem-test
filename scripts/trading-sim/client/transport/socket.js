@@ -5,6 +5,10 @@
  * - reconnects with exponential backoff and jitter (0.5 s doubling to 30 s)
  * - remembers subscriptions and sends them again after every reconnect
  * - tells listeners when it reconnected, so they can reload anything they may have missed
+ * - if the server refuses the token, asks for a fresh sign-in before the next attempt
+ *
+ * Costs: subscriptions are a Map by key (O(1) add/remove, O(n) resend after a reconnect);
+ * each frame is parsed once and handed to every listener.
  */
 
 /** @typedef {'connecting' | 'open' | 'closed'} SocketStatus */
@@ -18,10 +22,11 @@
  * @param {number} [options.timeoutMs]
  * @param {{ initial: number, max: number, factor: number }} [options.backoff]
  * @param {() => number} [options.random]
+ * @param {() => void} [options.onUnauthorized]  the server refused the token
  */
 export function createSocket({
   url, getToken, WebSocketImpl = globalThis.WebSocket, heartbeatMs = 15_000, timeoutMs = 10_000,
-  backoff = { initial: 500, max: 30_000, factor: 2 }, random = Math.random,
+  backoff = { initial: 500, max: 30_000, factor: 2 }, random = Math.random, onUnauthorized,
 }) {
   /** @type {WebSocket | null} */
   let ws = null;
@@ -82,6 +87,8 @@ export function createSocket({
         return;
       }
       if (frame.type === 'pong') return;
+      // The server closes the socket after this; the reconnect then signs in afresh.
+      if (frame.type === 'error' && frame.code === 'unauthorized') onUnauthorized?.();
       for (const l of frameListeners) l(frame);
     };
     socket.onclose = () => {
@@ -93,6 +100,7 @@ export function createSocket({
     socket.onerror = () => { /* onclose follows */ };
   }
 
+  /** Exponential backoff with jitter: initial × factor^attempts, capped, times 0.5–1. */
   function scheduleRetry() {
     if (stopped || retryTimer) return;
     const delay = Math.min(backoff.max, backoff.initial * backoff.factor ** attempts) * (0.5 + random() / 2);
@@ -100,6 +108,7 @@ export function createSocket({
     retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
   }
 
+  /** Ping on an interval; a socket silent for heartbeat + timeout is presumed dead and closed. */
   function startHeartbeat() {
     if (heartbeat) return;
     heartbeat = setInterval(() => {

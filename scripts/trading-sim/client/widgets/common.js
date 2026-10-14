@@ -1,8 +1,11 @@
 /**
  * Pieces several widgets share: the order flow (preview → confirm → place), symbol pickers, grids,
  * quote subscriptions. Widgets stay small by building on these.
+ *
+ * AppContext is what every widget receives: the services (transport, datafeed, broker, host,
+ * storage, settings, records) plus the shell's openTicket/openWidget and its root element.
  */
-import { el, clear, uid } from '../ui/dom.js';
+import { el, uid } from '../ui/dom.js';
 import { dialog, toast, confirm } from '../ui/feedback.js';
 import { SYMBOLS, getSymbol } from '../../shared/symbols.js';
 import { formatQty, formatPrice, LABELS } from '../ui/format.js';
@@ -89,14 +92,31 @@ export function symbolSelect({ value, label = 'Symbol', onChange, className = ''
  */
 
 /**
- * A grid that re-renders rows on demand and keeps its sort.
- * @param {{ caption: string, columns: Column[], empty: string, rowKey: (row: any) => string, rowClass?: (row: any) => string, onRow?: (row: any, tr: HTMLTableRowElement) => void }} o
+ * A table of records that keeps its sort, re-renders on demand, and stays fast as histories grow.
+ *
+ * Rendering is keyed: each row's <tr> is remembered by rowKey, and when `rowVersion` is given and
+ * returns the same value as last time (by ===), the existing row is reused instead of rebuilt.
+ * The broker replaces an order or execution object whenever it changes, so `rowVersion: (r) => r`
+ * makes an order event rebuild one row, not the whole table, and keeps focus on reused buttons.
+ * Only the first `pageSize` rows are in the DOM; a "Show more" row adds another page.
+ *
+ * Cost of setRows(n rows): O(n) to key them (O(n log n) if the user sorted a column), plus DOM
+ * work for the rows that changed among the ≤ limit shown.
+ *
+ * @param {{
+ *   caption: string, columns: Column[], empty: string, rowKey: (row: any) => string,
+ *   rowClass?: (row: any) => string, onRow?: (row: any, tr: HTMLTableRowElement) => void,
+ *   rowVersion?: (row: any) => unknown, pageSize?: number,
+ * }} o
  */
-export function createGrid({ caption, columns, empty, rowKey, rowClass, onRow }) {
+export function createGrid({ caption, columns, empty, rowKey, rowClass, onRow, rowVersion, pageSize = 200 }) {
   /** @type {{ id: string, dir: 1 | -1 } | null} */
   let sort = null;
   /** @type {any[]} */
   let rows = [];
+  let limit = pageSize;
+  /** Rendered rows by key, with the version they were built from. @type {Map<string, { version: unknown, tr: HTMLTableRowElement }>} */
+  const rendered = new Map();
   const tbody = el('tbody');
   const head = el('tr');
   for (const c of columns) {
@@ -111,8 +131,18 @@ export function createGrid({ caption, columns, empty, rowKey, rowClass, onRow })
   const table = el('table', { class: 'cme-grid' }, el('caption', { class: 'cme-visually-hidden' }, caption), el('thead', {}, head), tbody);
   const wrap = el('div', { class: 'cme-grid-wrap' }, table);
 
+  /** One <tr> for a record. @param {any} row */
+  function build(row) {
+    const tr = /** @type {HTMLTableRowElement} */ (el('tr', { class: rowClass?.(row) || null, 'data-key': rowKey(row) }));
+    for (const c of columns) {
+      const extra = c.cellClass?.(row) ?? '';
+      tr.appendChild(el('td', { class: [c.num ? 'cme-num' : '', extra].filter(Boolean).join(' ') || null }, c.cell(row)));
+    }
+    onRow?.(row, tr);
+    return tr;
+  }
+
   function draw() {
-    clear(tbody);
     let list = rows;
     if (sort) {
       const col = columns.find((c) => c.id === sort?.id);
@@ -123,18 +153,48 @@ export function createGrid({ caption, columns, empty, rowKey, rowClass, onRow })
       }
     }
     if (!list.length) {
-      tbody.appendChild(el('tr', {}, el('td', { class: 'cme-grid__empty', colspan: String(columns.length) }, el('div', { class: 'cme-tempty' }, empty))));
+      rendered.clear();
+      tbody.replaceChildren(el('tr', {}, el('td', { class: 'cme-grid__empty', colspan: String(columns.length) }, el('div', { class: 'cme-tempty' }, empty))));
       return;
     }
-    for (const row of list) {
-      const tr = el('tr', { class: rowClass?.(row) || null, 'data-key': rowKey(row) });
-      for (const c of columns) {
-        const extra = c.cellClass?.(row) ?? '';
-        tr.appendChild(el('td', { class: [c.num ? 'cme-num' : '', extra].filter(Boolean).join(' ') || null }, c.cell(row)));
+    const shown = list.length > limit ? list.slice(0, limit) : list;
+    /** @type {Set<string>} */
+    const used = new Set();
+    /** @type {HTMLTableRowElement[]} */
+    const wanted = [];
+    for (const row of shown) {
+      const key = rowKey(row);
+      const version = rowVersion ? rowVersion(row) : undefined;
+      let entry = rendered.get(key);
+      if (!entry || !rowVersion || entry.version !== version) {
+        entry = { version, tr: build(row) };
+        rendered.set(key, entry);
       }
-      onRow?.(row, tr);
-      tbody.appendChild(tr);
+      used.add(key);
+      wanted.push(entry.tr);
     }
+    for (const key of rendered.keys()) if (!used.has(key)) rendered.delete(key); // only what is shown is kept
+    if (list.length > shown.length) {
+      const more = Math.min(pageSize, list.length - shown.length);
+      wanted.push(/** @type {HTMLTableRowElement} */ (el('tr', { class: 'cme-grid__more' }, el('td', { colspan: String(columns.length) },
+        el('button', { class: 'cme-tbtn cme-tbtn--quiet', type: 'button', onclick: () => { limit += pageSize; draw(); } },
+          `Show ${more} more (${shown.length} of ${list.length})`)))));
+    }
+    // Reconcile in place: walk the wanted rows against what is in the table and insert only the
+    // ones not already in position. A row that stays is never detached, which matters because
+    // detaching a node drops keyboard focus inside it. O(rows shown) DOM operations at most.
+    // Rows that are no longer wanted (a rebuilt row's old <tr>, a filtered-out order) are removed
+    // as the walk meets them; otherwise the cursor would stick on one and every later row would
+    // be moved in front of it.
+    const keep = new Set(wanted);
+    let cursor = tbody.firstChild;
+    const skipStale = () => { while (cursor && !keep.has(/** @type {HTMLTableRowElement} */ (cursor))) { const next = cursor.nextSibling; cursor.remove(); cursor = next; } };
+    for (const tr of wanted) {
+      skipStale();
+      if (tr === cursor) { cursor = cursor.nextSibling; continue; }
+      tbody.insertBefore(tr, cursor);
+    }
+    skipStale();
   }
 
   return {
@@ -142,7 +202,7 @@ export function createGrid({ caption, columns, empty, rowKey, rowClass, onRow })
     /** @param {any[]} next */
     setRows(next) { rows = next; draw(); },
     redraw: draw,
-    /** Refresh the live columns of the rows on screen without rebuilding them (keeps clicks and focus). */
+    /** Refresh the live columns of the rows on screen without rebuilding them (keeps clicks and focus). O(rows shown). */
     patch() {
       const byKey = new Map(rows.map((r) => [rowKey(r), r]));
       for (const tr of tbody.querySelectorAll('tr[data-key]')) {

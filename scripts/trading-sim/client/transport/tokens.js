@@ -3,6 +3,7 @@
  *
  * The development source signs in to the mock server's /auth/token and refreshes a minute before
  * expiry, telling open sockets the new token so they re-authenticate without dropping.
+ * Concurrent callers share one renewal (`pending`), so a burst of requests signs in once.
  * In production, replace createDevTokenSource with one backed by the identity provider; the rest
  * of the client only calls getToken() and onRefresh().
  */
@@ -13,6 +14,8 @@
  * @property {(cb: (token: string) => void) => () => void} onRefresh
  * @property {() => string} user
  * @property {() => void} dispose
+ * @property {() => void} [invalidate]   the server refused the current token (it restarted with a
+ *                                          new signing key, say): the next getToken() signs in again
  */
 
 /**
@@ -60,6 +63,14 @@ export function createDevTokenSource({ authUrl, user = 'demo', fetchImpl = (...a
     onRefresh(cb) { listeners.add(cb); return () => listeners.delete(cb); },
     user: () => current?.user ?? user,
     dispose() { if (timer) clearTimeout(timer); timer = null; },
+    invalidate() {
+      // Drop the token and its refresh token (both are signed with the same key), unless a
+      // renewal is already under way, which will bring a fresh one anyway.
+      if (pending) return;
+      current = null;
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
   };
 }
 

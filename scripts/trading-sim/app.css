@@ -74,3 +74,6 @@ body.ts-page { overflow: hidden; background: var(--color-terminal-canvas); }
 
 /* The floating order ticket */
 .ts-ticket-dialog { width: var(--terminal-ticket); padding: 0; }
+
+/* Grids render a page of rows; the last row offers the next page (client/widgets/common.js). */
+.cme-grid tr.cme-grid__more td { text-align: center; padding: var(--terminal-space-2); }
