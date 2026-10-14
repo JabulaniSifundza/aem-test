@@ -10,10 +10,14 @@
  *   Switch      button.cme-switch[role=switch]: toggles aria-checked
  *   Menu        button[aria-haspopup=menu][aria-controls] opens .cme-tmenu; ↑/↓, Escape, outside click
  *   Dialog      [data-cme-close] inside a dialog.cme-tdialog closes it with that value
+ * Safe to load more than once (a page script and a module import): it binds once.
  * Every change fires a bubbling "cme:change" CustomEvent (detail.type = stepper | segmented |
  * pills | switch | menu) on the component, like js/cme.js. Steppers also fire "input" on their input.
  */
 (() => {
+  // Once per page, however many times it is loaded (as a script and as a module import).
+  if (window.cmeTerminalBehaviours) return;
+  window.cmeTerminalBehaviours = true;
   const emit = (el, detail) => el.dispatchEvent(new CustomEvent('cme:change', { bubbles: true, detail }));
 
   // ---- Stepper -------------------------------------------------------------

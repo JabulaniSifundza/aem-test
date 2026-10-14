@@ -16,6 +16,7 @@ import { readBlockConfig, getMetadata, toClassName } from './aem.js';
  *   Height     the block's height in pixels
  *   Symbol     BTCUSDT, ETHUSDT, SOLUSDT, SPY or QQQ
  *   Resolution 1, 5, 15, 30, 60, 240, 1D, 1W or 1M (charts)
+ *   Start      a simulated start time (ISO date and time), for demos and tests
  * Page metadata "trading-api", "trading-seed" and "trading-theme" set page-wide defaults.
  */
 
@@ -23,6 +24,19 @@ const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'SPY', 'QQQ'];
 const RESOLUTIONS = ['1', '5', '15', '30', '60', '240', '1D', '1W', '1M'];
 
 let servicesPromise = null;
+
+/**
+ * Resolves once the page has loaded and the browser is idle, so the simulator never delays the
+ * page's first paint or its other blocks.
+ */
+const afterLoad = () => new Promise((resolve) => {
+  const idle = () => {
+    if (window.requestIdleCallback) window.requestIdleCallback(() => resolve(), { timeout: 1500 });
+    else setTimeout(resolve, 0);
+  };
+  if (document.readyState === 'complete') idle();
+  else window.addEventListener('load', idle, { once: true });
+});
 
 /** The shell module, loaded once. */
 const shell = () => import('./trading-sim/client/shell.js');
@@ -45,6 +59,7 @@ export function readTradingConfig(block) {
     api: text('api') || getMetadata('trading-api') || null,
     user: text('user') || 'demo',
     seed: text('seed') || getMetadata('trading-seed') || undefined,
+    start: Number.isFinite(Date.parse(text('start'))) ? Date.parse(text('start')) : undefined,
     theme: theme === 'dark' ? 'dark' : 'light',
     height: height >= 200 && height <= 2000 ? height : null,
     symbol: SYMBOLS.includes(symbol) ? symbol : 'BTCUSDT',
@@ -64,8 +79,10 @@ export function tradingServices(config) {
       api: config.api,
       user: config.user,
       seed: config.seed,
+      start: config.start,
       theme: config.theme,
-      inPage: true, // the page's Content Security Policy does not allow module Workers
+      // The market runs in a Worker (head.html allows same-origin workers), or on the page
+      // thread if the Content Security Policy does not allow it.
     }));
   }
   return servicesPromise;
@@ -90,6 +107,7 @@ export async function decorateTradingBlock(block, mount) {
   root.append(status);
   block.replaceChildren(root);
   try {
+    await afterLoad();
     const [services, sim] = await Promise.all([tradingServices(config), shell()]);
     await mount(root, services, config, sim);
   } catch (error) {

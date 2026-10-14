@@ -9,6 +9,9 @@
  *
  * Several mounts on one page share one set of services, so an order placed in one shows in all.
  */
+// The design language's terminal behaviours (switches, steppers, segmented controls, pills, menus,
+// dialog close buttons). Imported here so every page that mounts the shell has them.
+import '../vendor/design-language/js/terminal.js';
 import { createDock } from './ui/dock.js';
 import { loadWorkspaces, TEMPLATES, fromSpec } from './state/workspaces.js';
 import { widgetDefs, MENU } from './widgets/index.js';

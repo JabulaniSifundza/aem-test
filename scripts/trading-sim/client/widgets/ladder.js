@@ -32,6 +32,8 @@ export function ladderWidget(ctx) {
       let quote = {};
       let center = 0;
       let rowsShown = 0;
+      /** Whether the ladder keeps the last price in view (off once the user scrolls). */
+      let follow = true;
       let depthId = '';
       let stopQuotes = () => {};
       let frame = 0;
@@ -67,31 +69,35 @@ export function ladderWidget(ctx) {
 
       // ---------------------------------------------------------------- row pool
       /** @type {Array<{ row: HTMLElement, cells: HTMLElement[], bidBar: HTMLElement, askBar: HTMLElement, bidQty: HTMLElement, askQty: HTMLElement, index: number }>} */
-      let pool = [];
+      const pool = [];
+      /** The rows area's height, kept by a ResizeObserver so drawing never forces a layout. */
+      let rowsHeight = 0;
+      const ro = new ResizeObserver((entries) => { rowsHeight = entries[0].contentRect.height; schedule(); });
+      ro.observe(rows);
+      function addRow() {
+        const bidBar = el('span', { class: 'cme-ladder__bar' });
+        const askBar = el('span', { class: 'cme-ladder__bar' });
+        const bidQty = el('span', { class: 'cme-ladder__qty' });
+        const askQty = el('span', { class: 'cme-ladder__qty' });
+        const cells = [
+          el('span', { class: 'cme-ladder__cell', role: 'gridcell' }),
+          el('button', { class: 'cme-ladder__cell cme-ladder__cell--bid', type: 'button', role: 'gridcell', 'data-col': 'bid' }, bidBar, bidQty),
+          el('span', { class: 'cme-ladder__cell cme-ladder__cell--price', role: 'gridcell' }),
+          el('button', { class: 'cme-ladder__cell cme-ladder__cell--ask', type: 'button', role: 'gridcell', 'data-col': 'ask' }, askBar, askQty),
+          el('span', { class: 'cme-ladder__cell', role: 'gridcell' }),
+        ];
+        const row = el('div', { class: 'cme-ladder__row', role: 'row' }, ...cells);
+        const entry = { row, cells, bidBar, askBar, bidQty, askQty, index: 0 };
+        cells[1].addEventListener('click', () => limit('BUY', entry.index));
+        cells[3].addEventListener('click', () => limit('SELL', entry.index));
+        pool.push(entry);
+        rows.appendChild(row);
+      }
+      /** Grow or shrink the row pool to fill the height; existing rows are kept. */
       function buildRows() {
-        const want = Math.max(10, Math.ceil(rows.clientHeight / ROW_PX) + 1);
-        if (want === pool.length) return;
-        rows.replaceChildren();
-        pool = [];
-        for (let k = 0; k < want; k += 1) {
-          const bidBar = el('span', { class: 'cme-ladder__bar' });
-          const askBar = el('span', { class: 'cme-ladder__bar' });
-          const bidQty = el('span', { class: 'cme-ladder__qty' });
-          const askQty = el('span', { class: 'cme-ladder__qty' });
-          const cells = [
-            el('span', { class: 'cme-ladder__cell', role: 'gridcell' }),
-            el('button', { class: 'cme-ladder__cell cme-ladder__cell--bid', type: 'button', role: 'gridcell', 'data-col': 'bid' }, bidBar, bidQty),
-            el('span', { class: 'cme-ladder__cell cme-ladder__cell--price', role: 'gridcell' }),
-            el('button', { class: 'cme-ladder__cell cme-ladder__cell--ask', type: 'button', role: 'gridcell', 'data-col': 'ask' }, askBar, askQty),
-            el('span', { class: 'cme-ladder__cell', role: 'gridcell' }),
-          ];
-          const row = el('div', { class: 'cme-ladder__row', role: 'row' }, ...cells);
-          const entry = { row, cells, bidBar, askBar, bidQty, askQty, index: 0 };
-          cells[1].addEventListener('click', () => limit('BUY', entry.index));
-          cells[3].addEventListener('click', () => limit('SELL', entry.index));
-          pool.push(entry);
-          rows.appendChild(row);
-        }
+        const want = Math.max(10, Math.ceil(rowsHeight / ROW_PX) + 1);
+        while (pool.length < want) addRow();
+        while (pool.length > want) pool.pop()?.row.remove();
         rowsShown = want;
       }
 
@@ -108,7 +114,8 @@ export function ladderWidget(ctx) {
         const last = quote.lp ? toIndex(quote.lp) : null;
         const bestAsk = asks.size ? Math.min(...asks.keys()) : null;
         if (!center && last !== null) center = last;
-        if (last !== null && (last > center + rowsShown / 2 - 2 || last < center - rowsShown / 2 + 2)) center = last;
+        // Follow the market until the user scrolls; the recentre button resumes following.
+        if (follow && last !== null && (last > center + rowsShown / 2 - 2 || last < center - rowsShown / 2 + 2)) center = last;
         const top = center + Math.floor(rowsShown / 2);
         const visibleSizes = [];
         for (let k = 0; k < pool.length; k += 1) { const i = top - k; visibleSizes.push(bids.get(i) ?? 0, asks.get(i) ?? 0); }
@@ -142,6 +149,11 @@ export function ladderWidget(ctx) {
           const here = ordersAt.get(i) ?? [];
           for (const [col, sideName] of /** @type {const} */ ([[0, 'BUY'], [4, 'SELL']])) {
             const mine = here.filter((o) => o.side === sideName);
+            // Rebuild a cell's order buttons only when its orders change: the ladder redraws on
+            // every depth update, and a button replaced between press and release never clicks.
+            const key = `${i}|${mine.map((o) => `${o.id}:${o.qty}:${o.filledQty}`).join(',')}`;
+            if (p.cells[col].dataset.orders === key) continue;
+            p.cells[col].dataset.orders = key;
             p.cells[col].replaceChildren(...mine.map((o) => el('button', {
               class: `cme-ladder__order${sideName === 'SELL' ? ' cme-ladder__order--sell' : ''}`, type: 'button',
               title: `Cancel ${o.side.toLowerCase()} ${o.type.toLowerCase()} ${formatQty(symbol, o.qty)} at ${formatPrice(symbol, price)}`,
@@ -165,7 +177,7 @@ export function ladderWidget(ctx) {
       }
 
       function subscribe() {
-        bids = new Map(); asks = new Map(); quote = {}; center = 0;
+        bids = new Map(); asks = new Map(); quote = {}; center = 0; follow = true;
         if (depthId) ctx.broker.unsubscribeDepth(depthId);
         depthId = ctx.broker.subscribeDepth(symbol, (d) => {
           if (d.snapshot) { bids = new Map(); asks = new Map(); }
@@ -223,8 +235,8 @@ export function ladderWidget(ctx) {
         try { await ctx.broker.cancelOrders(symbol, side ?? undefined, list.map((o) => o.id)); } catch (error) { toast({ title: 'Could not cancel', text: errorText(error), type: 'error' }); }
       }
       /** @param {number} by */
-      function scroll(by) { center += by; schedule(); }
-      function recenter() { center = quote.lp ? toIndex(quote.lp) : center; schedule(); }
+      function scroll(by) { center += by; follow = false; schedule(); }
+      function recenter() { center = quote.lp ? toIndex(quote.lp) : center; follow = true; schedule(); }
 
       async function openSettings() {
         const avg = switchField({ label: 'Average price', checked: settings.avgPrice });
@@ -257,7 +269,7 @@ export function ladderWidget(ctx) {
         ctx.host.on('pl', () => { ctx.broker.positions().then((ps) => { position = ps.find((p) => p.symbol === symbol) ?? null; schedule(); }); })];
       subscribe();
       return {
-        destroy() { stops.forEach((x) => x()); stopQuotes(); if (depthId) ctx.broker.unsubscribeDepth(depthId); cancelAnimationFrame(frame); },
+        destroy() { stops.forEach((x) => x()); stopQuotes(); if (depthId) ctx.broker.unsubscribeDepth(depthId); cancelAnimationFrame(frame); ro.disconnect(); },
         resize: schedule,
         show: schedule,
         state: () => ({ symbol, tif: tif.value, qty: qtyValue(), settings: { ...settings } }),

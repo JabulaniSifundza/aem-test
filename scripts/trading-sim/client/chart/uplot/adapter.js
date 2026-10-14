@@ -480,6 +480,9 @@ export function createUplotChart({ container, formatPrice, roundPrice, tick, sta
       p.u.setData(paneData(p.inst), false);
       p.u.setScale('x', { min: view.min, max: view.max });
     }
+    // State for tests and support: the visible bars and the number of drawings.
+    root.dataset.view = `${Math.round(view.min * 10) / 10}:${Math.round(view.max * 10) / 10}`;
+    root.dataset.drawings = String(state.drawings.length);
     maybeNeedHistory();
   }
 
@@ -593,7 +596,7 @@ export function createUplotChart({ container, formatPrice, roundPrice, tick, sta
       zoom(e.deltaY > 0 ? 1.12 : 1 / 1.12, anchor);
     }, { passive: false });
     over.addEventListener('contextmenu', (e) => {
-      if (!isMain) return;
+      if (!isMain || !shown.length) return; // no prices to act on before the bars arrive
       e.preventDefault();
       const rect = over.getBoundingClientRect();
       const price = u.posToVal(e.clientY - rect.top, 'y');
