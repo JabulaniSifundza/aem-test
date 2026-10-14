@@ -93,7 +93,7 @@ export function tradingServices(config) {
  * @param {Element} block
  * @param {(root: HTMLElement, services: object, config: object, sim: object) => unknown} mount
  */
-export async function decorateTradingBlock(block, mount) {
+export function decorateTradingBlock(block, mount) {
   const config = readTradingConfig(block);
   const root = document.createElement('div');
   root.className = 'cme-terminal';
@@ -106,15 +106,19 @@ export async function decorateTradingBlock(block, mount) {
   status.textContent = 'Starting the trading simulator…';
   root.append(status);
   block.replaceChildren(root);
-  try {
-    await afterLoad();
-    const [services, sim] = await Promise.all([tradingServices(config), shell()]);
-    await mount(root, services, config, sim);
-  } catch (error) {
-    status.textContent = `The trading simulator could not start: ${error.message}. Reload the page to try again.`;
-    // eslint-disable-next-line no-console
-    console.error(error);
-  }
+  // Not awaited: EDS shows the page once the first section's blocks have decorated, so the
+  // simulator starts after that, in the background, instead of holding up the first paint.
+  (async () => {
+    try {
+      await afterLoad();
+      const [services, sim] = await Promise.all([tradingServices(config), shell()]);
+      await mount(root, services, config, sim);
+    } catch (error) {
+      status.textContent = `The trading simulator could not start: ${error.message}. Reload the page to try again.`;
+      // eslint-disable-next-line no-console
+      console.error(error);
+    }
+  })();
 }
 
 /**
