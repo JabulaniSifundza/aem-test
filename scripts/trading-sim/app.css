@@ -33,15 +33,6 @@ body.ts-page { overflow: hidden; background: var(--color-terminal-canvas); }
 .ts-note { height: auto; padding: var(--terminal-space-4); }
 .ts-ladder-position { grid-column: span 2; display: flex; align-items: center; gap: var(--terminal-space-4); }
 
-/* Where a dragged tab will land: the half of the panel it will take */
-.cme-panel[data-drop] { position: relative; }
-.cme-panel[data-drop]::after { content: ""; position: absolute; z-index: 20; pointer-events: none; background: var(--color-terminal-row-selected); opacity: 0.6; }
-.cme-panel[data-drop="center"]::after { inset: 0; }
-.cme-panel[data-drop="left"]::after { inset: 0 50% 0 0; }
-.cme-panel[data-drop="right"]::after { inset: 0 0 0 50%; }
-.cme-panel[data-drop="top"]::after { inset: 0 0 50% 0; }
-.cme-panel[data-drop="bottom"]::after { inset: 50% 0 0 0; }
-
 /* Price flashes in the markets and watchlist grids */
 @keyframes ts-flash-up { from { background: var(--color-terminal-volume-up); } }
 @keyframes ts-flash-down { from { background: var(--color-terminal-volume-down); } }

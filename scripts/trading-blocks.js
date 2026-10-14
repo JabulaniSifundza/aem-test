@@ -93,19 +93,35 @@ export function readTradingConfig(block) {
 /**
  * The page's services, created by the first block that asks; later blocks get the same promise.
  * The first block's API, user, seed and start win for the whole page (one account per page).
+ * With an API, the user signs in first (email and password), in the first block's place; the
+ * session is kept for the tab (client/session.js). Without one there is nothing to sign in to:
+ * the market runs in the page.
  * @param {ReturnType<typeof readTradingConfig>} config
+ * @param {HTMLElement} root where the sign-in screen goes if it is needed
  */
-export function tradingServices(config) {
+export function tradingServices(config, root) {
   if (!servicesPromise) {
-    servicesPromise = import('./trading-sim/client/services.js').then(({ createServices }) => createServices({
-      api: config.api,
-      user: config.user,
-      seed: config.seed,
-      start: config.start,
-      theme: config.theme,
-      // The market runs in a Worker (head.html allows same-origin workers), or on the page
-      // thread if the Content Security Policy does not allow it.
-    }));
+    servicesPromise = (async () => {
+      const { createServices } = await import('./trading-sim/client/services.js');
+      let tokens;
+      if (config.api) {
+        const { signedIn } = await import('./trading-sim/client/session.js');
+        ({ tokens } = await signedIn(config.api, root));
+      }
+      const services = await createServices({
+        api: config.api,
+        user: config.user,
+        seed: config.seed,
+        start: config.start,
+        theme: config.theme,
+        tokens,
+        // The market runs in a Worker (head.html allows same-origin workers), or on the page
+        // thread if the Content Security Policy does not allow it.
+      });
+      const { signOut } = services;
+      if (signOut) services.signOut = async () => { await signOut(); window.location.reload(); };
+      return services;
+    })();
   }
   return servicesPromise;
 }
@@ -133,7 +149,7 @@ export function decorateTradingBlock(block, mount) {
   (async () => {
     try {
       await afterLoad();
-      const [services, sim] = await Promise.all([tradingServices(config), shell()]);
+      const [services, sim] = await Promise.all([tradingServices(config, root), shell()]);
       const turn = mountQueue.then(yieldToMain).then(() => mount(root, services, config, sim));
       mountQueue = turn.catch(() => {});
       await turn;

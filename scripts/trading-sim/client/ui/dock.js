@@ -1,17 +1,27 @@
 /**
- * The docking layout (requirement X-2): panels in nested rows and columns, tabs in each panel,
- * drag a tab onto another panel (as a tab, or to an edge to split), resize with the gutters,
- * maximise a panel, pop a widget out into its own window, close tabs.
+ * The docking layout (requirement X-2), behaving as the CME simulator's (dockview):
  *
- * The layout is plain data (DockState) so a workspace can be saved and restored. Widgets are
- * created once and moved between panels without being rebuilt, so a chart keeps its state when its
- * tab is dragged.
+ * - Docked panels sit in nested rows and columns; each panel holds tabs. Gutters resize them.
+ * - A widget added to an empty workspace fills it. Added to a workspace that has panels, it opens
+ *   as a **floating panel**: 600 × 400, the first at (110, 80) inside the dock and each next one
+ *   60 px right and 30 px down, on top. Its tab strip moves it (it stays inside the dock), eight
+ *   grips resize it, pressing on it brings it to the front, and its **Dock** button docks it as a
+ *   full-width row at the top of the layout, every row then sharing the height equally.
+ * - Dragging a tab onto a docked panel: the outer 20% on each side splits the panel on that side,
+ *   anywhere else (or the tab strip) adds it as a tab. On a floating panel it always joins as a
+ *   tab. A panel left with no tabs disappears.
+ * - Docked panels can be maximised, and a widget can pop out into its own browser window.
  *
- * render() rebuilds the panel frames (tabs, sashes) from the layout tree and re-attaches the
- * existing widget elements; it never re-creates widgets. Tree operations walk the layout, O(panels),
- * and a workspace has a handful of panels, so simplicity wins over indexes here. onChange is
- * called with the new DockState after every change, and the shell saves it (debounced) as the
- * workspace.
+ * The layout is plain data (DockState), floating panels included, so a workspace is saved and
+ * restored as it was left. Widgets are created once and moved between panels without being
+ * rebuilt, so a chart keeps its state when its tab is dragged or its panel docked.
+ *
+ * render() rebuilds the panel frames (tabs, sashes, floating frames) from the state and
+ * re-attaches the existing widget elements; it never re-creates widgets. Moving and resizing a
+ * floating panel change its element's style directly while the pointer moves, and update the
+ * state once on release, so dragging never re-renders. Tree operations walk the layout:
+ * O(panels), and a workspace has a handful. onChange gets the new DockState after every change;
+ * the shell saves it (debounced) as the workspace.
  */
 import { el, icon, iconButton, clear, uid } from './dom.js';
 
@@ -19,8 +29,9 @@ import { el, icon, iconButton, clear, uid } from './dom.js';
  * @typedef {{ type: 'split', dir: 'row' | 'column', sizes: number[], children: DockNode[] }} SplitNode
  * @typedef {{ type: 'group', id: string, tabs: string[], active: string }} GroupNode
  * @typedef {SplitNode | GroupNode} DockNode
+ * @typedef {{ group: GroupNode, x: number, y: number, w: number, h: number }} FloatNode  px inside the dock; later entries are on top
  * @typedef {{ kind: string, params: Record<string, any> }} WidgetRef
- * @typedef {{ layout: DockNode | null, widgets: Record<string, WidgetRef>, maximized?: string | null }} DockState
+ * @typedef {{ layout: DockNode | null, widgets: Record<string, WidgetRef>, maximized?: string | null, floating?: FloatNode[] }} DockState
  */
 
 /**
@@ -47,46 +58,60 @@ import { el, icon, iconButton, clear, uid } from './dom.js';
  * @property {string} id
  */
 
-const EDGE = 0.25; // share of a panel's width/height that counts as its edge when dropping
+/** Share of a docked panel's width or height that counts as its edge when dropping (dockview: 20%). */
+const EDGE = 0.2;
+/** Height of a panel's tab strip: drops there always add a tab. */
+const TAB_STRIP = 34;
+/** A new floating panel, as in the simulator. */
+const FLOAT = { w: 600, h: 400, x: 110, y: 80, dx: 60, dy: 30, minW: 240, minH: 160 };
+const GRIPS = /** @type {const} */ (['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se']);
 
 /**
  * @param {{ root: HTMLElement, defs: Map<string, WidgetDef>, onChange: (state: DockState) => void, emptyText?: string }} options
  */
 export function createDock({ root, defs, onChange, emptyText = 'Add widgets from the menu on the left.' }) {
-  /** @type {DockState} */
-  let state = { layout: null, widgets: {}, maximized: null };
+  /** @type {Required<DockState>} */
+  let state = { layout: null, widgets: {}, maximized: null, floating: [] };
   /** @type {Map<string, { host: HTMLElement, instance: WidgetInstance, title: string, popup: Window | null }>} */
   const live = new Map();
   /** @type {string | null} */
-  let focusedGroup = null;
-  /** @type {string | null} */
   let dragging = null;
+  /** The layer that holds floating panels (rebuilt by render). */
+  let floatLayer = el('div', { class: 'cme-dock__floats' });
 
-  const ro = new ResizeObserver(() => { for (const w of live.values()) w.instance.resize?.(); });
+  const ro = new ResizeObserver(() => { clampFloats(); for (const w of live.values()) w.instance.resize?.(); });
   ro.observe(root);
 
   // ------------------------------------------------------------------ tree helpers
 
-  /** @param {DockNode | null} node @param {(g: GroupNode) => void} fn */
-  function eachGroup(node, fn) {
-    if (!node) return;
-    if (node.type === 'group') fn(node);
-    else node.children.forEach((c) => eachGroup(c, fn));
+  /** Every group: docked ones (tree order), then floating ones (bottom to top). @param {(g: GroupNode) => void} fn */
+  function eachGroup(fn) {
+    /** @param {DockNode | null} node */
+    const walk = (node) => {
+      if (!node) return;
+      if (node.type === 'group') fn(node);
+      else node.children.forEach(walk);
+    };
+    walk(state.layout);
+    for (const f of state.floating) fn(f.group);
   }
   /** @param {string} id */
   function findGroup(id) {
     /** @type {GroupNode | null} */
     let found = null;
-    eachGroup(state.layout, (g) => { if (g.id === id) found = g; });
+    eachGroup((g) => { if (g.id === id) found = g; });
     return /** @type {GroupNode | null} */ (found);
   }
   /** @param {string} widgetId */
   function groupOf(widgetId) {
     /** @type {GroupNode | null} */
     let found = null;
-    eachGroup(state.layout, (g) => { if (g.tabs.includes(widgetId)) found = g; });
+    eachGroup((g) => { if (g.tabs.includes(widgetId)) found = g; });
     return /** @type {GroupNode | null} */ (found);
   }
+  /** The floating entry for a group, if it floats. @param {string} groupId */
+  const floatOf = (groupId) => state.floating.find((f) => f.group.id === groupId) ?? null;
+
   /** Remove empty groups and collapse single-child splits. @param {DockNode | null} node @returns {DockNode | null} */
   function normalize(node) {
     if (!node) return null;
@@ -107,6 +132,12 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
     if (kept.length === 1) return kept[0];
     return { ...node, children: kept, sizes };
   }
+  /** Normalise the docked tree and drop floating panels that lost their last tab. */
+  function tidy() {
+    state.layout = normalize(state.layout);
+    state.floating = state.floating.filter((f) => f.group.tabs.length);
+    if (state.maximized && (!findGroup(state.maximized) || floatOf(state.maximized))) state.maximized = null;
+  }
   /** Replace a node in the tree. @param {DockNode} target @param {DockNode} replacement */
   function replaceNode(target, replacement) {
     if (state.layout === target) { state.layout = replacement; return; }
@@ -121,6 +152,39 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
   }
 
   const newGroup = (/** @type {string} */ widgetId) => /** @type {GroupNode} */ ({ type: 'group', id: uid('grp'), tabs: [widgetId], active: widgetId });
+
+  // ------------------------------------------------------------------ geometry
+
+  /** The floating layer's size (the dock's content box). Falls back to the root's size before the first render. */
+  function bounds() {
+    const r = floatLayer.getBoundingClientRect();
+    if (r.width && r.height) return { w: r.width, h: r.height };
+    return { w: Math.max(0, root.clientWidth - 16), h: Math.max(0, root.clientHeight - 8) };
+  }
+  /** Keep a floating panel inside the dock (and no bigger than it). @param {FloatNode} f */
+  function clamp(f) {
+    const b = bounds();
+    if (!b.w || !b.h) return;
+    f.w = Math.min(Math.max(FLOAT.minW, f.w), Math.max(FLOAT.minW, b.w));
+    f.h = Math.min(Math.max(FLOAT.minH, f.h), Math.max(FLOAT.minH, b.h));
+    f.x = Math.max(0, Math.min(f.x, b.w - f.w));
+    f.y = Math.max(0, Math.min(f.y, b.h - f.h));
+  }
+  /** After the dock shrinks: pull floating panels back inside. */
+  function clampFloats() {
+    for (const f of state.floating) {
+      clamp(f);
+      const node = /** @type {HTMLElement | null} */ (floatLayer.querySelector(`[data-float="${f.group.id}"]`));
+      if (node) place(node, f);
+    }
+  }
+  /** @param {HTMLElement} node @param {FloatNode} f */
+  function place(node, f) {
+    node.style.left = `${f.x}px`;
+    node.style.top = `${f.y}px`;
+    node.style.width = `${f.w}px`;
+    node.style.height = `${f.h}px`;
+  }
 
   // ------------------------------------------------------------------ widgets
 
@@ -162,8 +226,7 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
     entry?.host.remove();
     live.delete(id);
     delete state.widgets[id];
-    state.layout = normalize(state.layout);
-    if (state.maximized && !findGroup(state.maximized)) state.maximized = null;
+    tidy();
     render();
     emit();
   }
@@ -176,21 +239,28 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
     onChange(getState());
   }
 
+  /** Tell the widgets in a group that their size changed. @param {GroupNode} g */
+  const resizeGroup = (g) => { for (const id of g.tabs) live.get(id)?.instance.resize?.(); };
+
   // ------------------------------------------------------------------ rendering
 
   function render() {
     // Keep widget hosts alive while the structure is rebuilt.
     for (const w of live.values()) if (!w.popup) w.host.remove();
     clear(root);
-    if (!state.layout) { root.appendChild(el('div', { class: 'cme-dock__empty' }, emptyText)); return; }
+    floatLayer = el('div', { class: 'cme-dock__floats' });
     const maximized = state.maximized ? findGroup(state.maximized) : null;
-    root.appendChild(maximized ? renderGroup(maximized, true) : renderNode(state.layout));
+    if (maximized) root.appendChild(renderGroup(maximized, { maximized: true, floating: false }));
+    else if (state.layout) root.appendChild(renderNode(state.layout));
+    else if (!state.floating.length) root.appendChild(el('div', { class: 'cme-dock__empty' }, emptyText));
+    root.appendChild(floatLayer);
+    if (!maximized) state.floating.forEach((f, i) => floatLayer.appendChild(renderFloat(f, i)));
     for (const w of live.values()) if (!w.host.hidden) w.instance.resize?.();
   }
 
   /** @param {DockNode} node @returns {HTMLElement} */
   function renderNode(node) {
-    if (node.type === 'group') return renderGroup(node, false);
+    if (node.type === 'group') return renderGroup(node, { maximized: false, floating: false });
     const box = el('div', { class: `cme-dock__split cme-dock__split--${node.dir}` });
     const total = node.sizes.reduce((a, b) => a + b, 0) || 1;
     node.children.forEach((child, i) => {
@@ -202,8 +272,11 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
     return box;
   }
 
-  /** @param {GroupNode} g @param {boolean} maximized */
-  function renderGroup(g, maximized) {
+  /**
+   * A panel: tab strip, actions, and the active widget.
+   * @param {GroupNode} g @param {{ maximized: boolean, floating: boolean }} o
+   */
+  function renderGroup(g, { maximized, floating }) {
     const tablist = el('div', { class: 'cme-panel__tablist', role: 'tablist', 'aria-label': 'Widgets in this panel' });
     for (const id of g.tabs) {
       const w = ensureWidget(id);
@@ -211,7 +284,7 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
       const label = el('button', {
         class: 'cme-panel__tab-label', type: 'button', role: 'tab', 'aria-selected': String(selected), 'aria-controls': `w-${id}`, id: `t-${id}`,
         tabindex: selected ? '0' : '-1', draggable: 'true',
-        onclick: () => { g.active = id; focusedGroup = g.id; render(); emit(); },
+        onclick: () => { g.active = id; render(); emit(); },
         onkeydown: (/** @type {KeyboardEvent} */ e) => {
           if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); closeWidget(id); }
           if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
@@ -228,9 +301,12 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
         el('button', { class: 'cme-panel__tab-close', type: 'button', tabindex: '-1', 'aria-hidden': 'true', title: `Close ${w.title}`, onclick: () => closeWidget(id) }, icon('close', 'sm'))));
     }
     const active = live.get(g.active);
-    const actions = el('div', { class: 'cme-panel__actions' },
-      iconButton(maximized ? 'restore' : 'maximize', maximized ? 'Restore' : 'Maximise', { onclick: () => { state.maximized = maximized ? null : g.id; render(); emit(); } }),
-      iconButton('popout', 'Open in a new window', { onclick: () => popOut(g.active), disabled: !active || Boolean(active.popup) }));
+    // Floating panels have one action, Dock (as in the simulator); docked ones maximise and pop out.
+    const actions = floating
+      ? el('div', { class: 'cme-panel__actions' }, iconButton('dock', 'Dock', { onclick: () => dockFloat(g.id) }))
+      : el('div', { class: 'cme-panel__actions' },
+        iconButton(maximized ? 'restore' : 'maximize', maximized ? 'Restore' : 'Maximise', { onclick: () => { state.maximized = maximized ? null : g.id; render(); emit(); } }),
+        iconButton('popout', 'Open in a new window', { onclick: () => popOut(g.active), disabled: !active || Boolean(active.popup) }));
     const body = el('div', { class: 'cme-panel__body cme-panel__body--flush' });
     for (const id of g.tabs) {
       const w = /** @type {NonNullable<ReturnType<typeof live.get>>} */ (live.get(id));
@@ -242,15 +318,134 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
       body.appendChild(w.host);
       if (id === g.active) w.instance.show?.();
     }
+    const strip = el('div', { class: 'cme-panel__tabs' }, tablist, actions);
     const panel = el('section', {
-      class: `cme-panel${maximized ? ' cme-panel--maximized' : ''}`, 'aria-label': active?.title ?? 'Panel', 'data-group': g.id,
-      onfocusin: () => { focusedGroup = g.id; },
-      onmousedown: () => { focusedGroup = g.id; },
-      ondragover: (/** @type {DragEvent} */ e) => { if (!dragging) return; e.preventDefault(); markDrop(panel, zoneOf(panel, e)); },
+      class: `cme-panel${maximized ? ' cme-panel--maximized' : ''}${floating ? ' cme-panel--floating' : ''}`,
+      'aria-label': active?.title ?? 'Panel', 'data-group': g.id,
+      ondragover: (/** @type {DragEvent} */ e) => { if (!dragging) return; e.preventDefault(); e.stopPropagation(); markDrop(panel, floating ? 'center' : zoneOf(panel, e)); },
       ondragleave: (/** @type {DragEvent} */ e) => { if (!panel.contains(/** @type {Node} */ (e.relatedTarget))) clearDropMarks(); },
-      ondrop: (/** @type {DragEvent} */ e) => { e.preventDefault(); const id = dragging; clearDropMarks(); if (id) moveWidget(id, g.id, zoneOf(panel, e)); },
-    }, el('div', { class: 'cme-panel__tabs' }, tablist, actions), body);
+      ondrop: (/** @type {DragEvent} */ e) => { e.preventDefault(); e.stopPropagation(); const id = dragging; clearDropMarks(); if (id) moveWidget(id, g.id, floating ? 'center' : zoneOf(panel, e)); },
+    }, strip, body);
+    if (floating) strip.addEventListener('pointerdown', (e) => startMove(e, g.id));
     return panel;
+  }
+
+  /** A floating panel's frame: position, the panel, and its resize grips. @param {FloatNode} f @param {number} i stacking order */
+  function renderFloat(f, i) {
+    clamp(f);
+    const node = el('div', { class: 'cme-dock__float', 'data-float': f.group.id });
+    place(node, f);
+    node.style.zIndex = String(i + 1);
+    node.appendChild(renderGroup(f.group, { maximized: false, floating: true }));
+    for (const edge of GRIPS) {
+      const grip = el('div', { class: `cme-dock__grip cme-dock__grip--${edge}`, 'aria-hidden': 'true' });
+      grip.addEventListener('pointerdown', (e) => startResize(e, f.group.id, edge));
+      node.appendChild(grip);
+    }
+    // Pressing anywhere on it brings it to the front (capture: before the widget handles the press).
+    node.addEventListener('pointerdown', () => raise(f.group.id), true);
+    return node;
+  }
+
+  /** Bring a floating panel to the front, without re-rendering (so the press still clicks). @param {string} groupId */
+  function raise(groupId) {
+    const i = state.floating.findIndex((f) => f.group.id === groupId);
+    if (i < 0 || i === state.floating.length - 1) return;
+    const [f] = state.floating.splice(i, 1);
+    state.floating.push(f);
+    state.floating.forEach((x, k) => {
+      const node = /** @type {HTMLElement | null} */ (floatLayer.querySelector(`[data-float="${x.group.id}"]`));
+      if (node) node.style.zIndex = String(k + 1);
+    });
+    emit();
+  }
+
+  /**
+   * Move a floating panel by its tab strip. Presses on the tabs' own buttons and on the actions
+   * are left alone: a tab drag moves the tab (HTML drag and drop), not the window.
+   * @param {PointerEvent} e @param {string} groupId
+   */
+  function startMove(e, groupId) {
+    const target = /** @type {HTMLElement} */ (e.target);
+    if (e.button !== 0 || target.closest('button, [draggable="true"]')) return;
+    const f = floatOf(groupId);
+    const node = /** @type {HTMLElement | null} */ (floatLayer.querySelector(`[data-float="${groupId}"]`));
+    if (!f || !node) return;
+    e.preventDefault();
+    const strip = /** @type {HTMLElement} */ (e.currentTarget);
+    strip.setPointerCapture(e.pointerId);
+    const start = { x: e.clientX, y: e.clientY, fx: f.x, fy: f.y };
+    node.classList.add('is-moving');
+    const move = (/** @type {PointerEvent} */ ev) => {
+      f.x = start.fx + ev.clientX - start.x;
+      f.y = start.fy + ev.clientY - start.y;
+      clamp(f);
+      place(node, f);
+    };
+    const up = () => {
+      node.classList.remove('is-moving');
+      strip.removeEventListener('pointermove', move);
+      strip.removeEventListener('pointerup', up);
+      strip.removeEventListener('pointercancel', up);
+      emit();
+    };
+    strip.addEventListener('pointermove', move);
+    strip.addEventListener('pointerup', up);
+    strip.addEventListener('pointercancel', up);
+  }
+
+  /** Resize a floating panel from an edge or corner. @param {PointerEvent} e @param {string} groupId @param {typeof GRIPS[number]} edge */
+  function startResize(e, groupId, edge) {
+    const f = floatOf(groupId);
+    const node = /** @type {HTMLElement | null} */ (floatLayer.querySelector(`[data-float="${groupId}"]`));
+    if (!f || !node || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const grip = /** @type {HTMLElement} */ (e.currentTarget);
+    grip.setPointerCapture(e.pointerId);
+    const b = bounds();
+    const s = { x: e.clientX, y: e.clientY, fx: f.x, fy: f.y, fw: f.w, fh: f.h };
+    let frame = 0;
+    const move = (/** @type {PointerEvent} */ ev) => {
+      const dx = ev.clientX - s.x;
+      const dy = ev.clientY - s.y;
+      if (edge.includes('e')) f.w = Math.max(FLOAT.minW, Math.min(s.fw + dx, b.w - s.fx));
+      if (edge.includes('s')) f.h = Math.max(FLOAT.minH, Math.min(s.fh + dy, b.h - s.fy));
+      if (edge.includes('w')) { const x = Math.max(0, Math.min(s.fx + dx, s.fx + s.fw - FLOAT.minW)); f.w = s.fw + (s.fx - x); f.x = x; }
+      if (edge.includes('n')) { const y = Math.max(0, Math.min(s.fy + dy, s.fy + s.fh - FLOAT.minH)); f.h = s.fh + (s.fy - y); f.y = y; }
+      place(node, f);
+      // Widgets redraw at most once a frame while the edge moves.
+      if (!frame) frame = requestAnimationFrame(() => { frame = 0; resizeGroup(f.group); });
+    };
+    const up = () => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', up);
+      resizeGroup(f.group);
+      emit();
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', up);
+  }
+
+  /**
+   * Dock a floating panel: a full-width row at the top of the layout, every row then sharing the
+   * height equally (as the simulator does).
+   * @param {string} groupId
+   */
+  function dockFloat(groupId) {
+    const f = floatOf(groupId);
+    if (!f) return;
+    state.floating = state.floating.filter((x) => x !== f);
+    if (!state.layout) state.layout = f.group;
+    else if (state.layout.type === 'split' && state.layout.dir === 'column') {
+      state.layout.children.unshift(f.group);
+      state.layout.sizes = state.layout.children.map(() => 1);
+    } else state.layout = { type: 'split', dir: 'column', sizes: [1, 1], children: [f.group, state.layout] };
+    tidy();
+    render();
+    emit();
   }
 
   /** A resize handle between child i-1 and i. @param {SplitNode} node @param {number} i @param {HTMLElement} box */
@@ -306,12 +501,12 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
 
   // ------------------------------------------------------------------ drag and drop
 
-  /** @param {HTMLElement} panel @param {DragEvent} e @returns {'center' | 'left' | 'right' | 'top' | 'bottom'} */
+  /** Where a tab dropped on a docked panel goes. @param {HTMLElement} panel @param {DragEvent} e @returns {'center' | 'left' | 'right' | 'top' | 'bottom'} */
   function zoneOf(panel, e) {
     const r = panel.getBoundingClientRect();
     const x = (e.clientX - r.left) / r.width;
     const y = (e.clientY - r.top) / r.height;
-    if (e.clientY - r.top < 34) return 'center'; // over the tab strip: add as a tab
+    if (e.clientY - r.top < TAB_STRIP) return 'center'; // over the tab strip: add as a tab
     if (x < EDGE) return 'left';
     if (x > 1 - EDGE) return 'right';
     if (y < EDGE) return 'top';
@@ -329,13 +524,15 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
   }
 
   /**
-   * Move a widget onto a panel: as a tab (center) or into a new panel beside it.
+   * Move a widget onto a panel: as a tab (center) or into a new panel beside it. A floating
+   * target only takes tabs. The source panel disappears if it is left empty.
    * @param {string} id @param {string} targetGroupId @param {'center' | 'left' | 'right' | 'top' | 'bottom'} zone
    */
   function moveWidget(id, targetGroupId, zone) {
     const source = groupOf(id);
     const target = findGroup(targetGroupId);
     if (!source || !target) return;
+    if (floatOf(targetGroupId)) zone = 'center';
     if (source === target && (zone === 'center' || source.tabs.length === 1)) return;
     source.tabs = source.tabs.filter((t) => t !== id);
     if (source.active === id) source.active = source.tabs[0] ?? '';
@@ -350,7 +547,7 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
       const split = { type: 'split', dir, sizes: [1, 1], children: before ? [fresh, { ...target }] : [{ ...target }, fresh] };
       replaceNode(target, split);
     }
-    state.layout = normalize(state.layout);
+    tidy();
     render();
     emit();
   }
@@ -398,46 +595,56 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
   }
 
   return {
-    /** Replace the layout (switching workspace). @param {DockState} next */
+    /** Replace the layout (switching workspace). Workspaces saved before floating panels existed load without any. @param {DockState} next */
     load(next) {
       for (const [, w] of live) { w.popup?.close(); w.instance.destroy(); w.host.remove(); }
       live.clear();
-      state = JSON.parse(JSON.stringify(next));
-      state.layout = normalize(state.layout);
-      focusedGroup = null;
+      const copy = JSON.parse(JSON.stringify(next));
+      state = { layout: copy.layout ?? null, widgets: copy.widgets ?? {}, maximized: copy.maximized ?? null, floating: copy.floating ?? [] };
+      tidy();
       render();
     },
     getState,
     /**
-     * Add a widget: as a tab in the focused panel, or beside it, or as the first panel.
-     * @param {string} kind @param {Record<string, any>} [params] @param {{ beside?: 'right' | 'bottom' }} [where]
+     * Add a widget the way the simulator does: into an empty workspace it fills the dock;
+     * otherwise it opens floating, cascading from the last one, on top.
+     * @param {string} kind @param {Record<string, any>} [params]
+     * @returns {string} the widget id
      */
-    add(kind, params = {}, where = {}) {
+    add(kind, params = {}) {
       const id = uid('w');
       state.widgets[id] = { kind, params };
       state.maximized = null;
-      const target = (focusedGroup && findGroup(focusedGroup)) || (() => { /** @type {GroupNode | null} */ let first = null; eachGroup(state.layout, (g) => { first ??= g; }); return first; })();
-      if (!state.layout || !target) state.layout = newGroup(id);
-      else if (where.beside) {
-        const split = /** @type {SplitNode} */ ({ type: 'split', dir: where.beside === 'right' ? 'row' : 'column', sizes: [2, 1], children: [{ ...target }, newGroup(id)] });
-        replaceNode(target, split);
-        state.layout = normalize(state.layout);
-      } else { target.tabs.push(id); target.active = id; }
+      const group = newGroup(id);
+      if (!state.layout && !state.floating.length) state.layout = group;
+      else {
+        const k = state.floating.length;
+        /** @type {FloatNode} */
+        const f = { group, x: FLOAT.x + FLOAT.dx * k, y: FLOAT.y + FLOAT.dy * k, w: FLOAT.w, h: FLOAT.h };
+        clamp(f);
+        state.floating.push(f);
+      }
       render();
       emit();
-      const g = groupOf(id);
-      if (g) focusedGroup = g.id;
       return id;
     },
-    /** Show a widget's tab if it is open. @param {(ref: WidgetRef) => boolean} match */
+    /** Show a widget's tab if it is open (and bring its panel to the front). @param {(ref: WidgetRef) => boolean} match */
     focus(match) {
       for (const [id, ref] of Object.entries(state.widgets)) {
         if (!match(ref)) continue;
         const g = groupOf(id);
-        if (g) { g.active = id; focusedGroup = g.id; render(); return true; }
+        if (!g) continue;
+        g.active = id;
+        const f = floatOf(g.id);
+        if (f) { state.floating = [...state.floating.filter((x) => x !== f), f]; }
+        render();
+        emit();
+        return true;
       }
       return false;
     },
+    /** Dock a floating panel (the same as its Dock button). */
+    dock: dockFloat,
     close: closeWidget,
     destroy() { ro.disconnect(); for (const w of live.values()) { w.popup?.close(); w.instance.destroy(); } live.clear(); },
   };

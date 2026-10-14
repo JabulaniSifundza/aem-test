@@ -35,13 +35,14 @@ import { createRecords } from './state/records.js';
 const DEFAULT_SETTINGS = { theme: 'light', oneClick: false, menuCollapsed: false };
 
 /**
- * @param {{ api?: string | null, user?: string, start?: number, seed?: string, inPage?: boolean, theme?: 'light' | 'dark' }} options
+ * @param {{ api?: string | null, user?: string, start?: number, seed?: string, inPage?: boolean, theme?: 'light' | 'dark', tokens?: import('./transport/tokens.js').TokenSource & { signOut?: () => Promise<void> } }} options
  *   inPage: run the loopback on the page's thread even where a Worker is allowed
  *   theme: the theme to use until the user picks one
+ *   tokens: a signed-in session (email and password); without it, the development sign-in as `user`
  */
-export async function createServices({ api, user = 'demo', start, seed, inPage = false, theme } = {}) {
+export async function createServices({ api, user = 'demo', start, seed, inPage = false, theme, tokens } = {}) {
   const transport = api
-    ? createTransport({ urls: urlsFromBase(api), tokens: createDevTokenSource({ authUrl: `${api.replace(/\/$/, '')}/trade/v1/auth`, user }) })
+    ? createTransport({ urls: urlsFromBase(api), tokens: tokens ?? createDevTokenSource({ authUrl: `${api.replace(/\/$/, '')}/trade/v1/auth`, user }) })
     : createLoopbackTransport({ user, start, seed, port: createAutoPort({ preferWorker: !inPage }) });
   const host = createHost();
   const datafeed = createDatafeed(transport);
@@ -63,6 +64,10 @@ export async function createServices({ api, user = 'demo', start, seed, inPage =
   return {
     transport, host, datafeed, broker, storage, records, bus, now, mode: api ? 'server' : 'loopback',
     settings,
+    /** The signed-in email address, for the header (null for the development sign-in and the loopback). */
+    displayName: /** @type {{ email?: () => string | null }} */ (tokens ?? {}).email?.() ?? null,
+    /** Sign out (only for an email-and-password session); the page then shows the sign-in screen. */
+    signOut: tokens?.signOut ? async () => { await records.flush(); await tokens.signOut?.(); } : null,
     /** @template {keyof Settings} K @param {K} key @param {Settings[K]} value */
     setSetting(key, value) {
       settings[key] = value;
