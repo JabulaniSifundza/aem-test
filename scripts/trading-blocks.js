@@ -38,6 +38,12 @@ const afterLoad = () => new Promise((resolve) => {
   else window.addEventListener('load', idle, { once: true });
 });
 
+/** Gives the browser a turn (input, paint) before the next piece of work. */
+const yieldToMain = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+
+/** Blocks mount one at a time, each in its own task, so no single task holds the page. */
+let mountQueue = Promise.resolve();
+
 /** The shell module, loaded once. */
 const shell = () => import('./trading-sim/client/shell.js');
 
@@ -112,7 +118,9 @@ export function decorateTradingBlock(block, mount) {
     try {
       await afterLoad();
       const [services, sim] = await Promise.all([tradingServices(config), shell()]);
-      await mount(root, services, config, sim);
+      const turn = mountQueue.then(yieldToMain).then(() => mount(root, services, config, sim));
+      mountQueue = turn.catch(() => {});
+      await turn;
     } catch (error) {
       status.textContent = `The trading simulator could not start: ${error.message}. Reload the page to try again.`;
       // eslint-disable-next-line no-console
