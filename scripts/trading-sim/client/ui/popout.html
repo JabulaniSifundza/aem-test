@@ -1,0 +1,19 @@
+<!doctype html>
+<!--
+  The window a widget opens in when it is popped out ("Open in a new window", client/ui/dock.js).
+  It is deliberately empty and has no script: the page that opens it adds the stylesheets, the
+  theme and the widget once it has loaded, and binds the terminal behaviours to it. It is a real
+  same-origin page rather than about:blank so that it renders in standards mode and loads the
+  page's stylesheets, fonts and icons as same-origin resources.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Trading Simulator</title>
+</head>
+<body data-ts-popout>
+  <p>Opening…</p>
+</body>
+</html>

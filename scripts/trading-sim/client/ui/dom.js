@@ -86,6 +86,29 @@ let idSeq = 0;
 export const uid = (prefix = 'ts') => `${prefix}-${(idSeq += 1)}`;
 
 /**
+ * requestAnimationFrame in the window that shows `node`, returning a function that cancels it.
+ * A widget popped out into a window of its own (client/ui/dock.js) is drawn on that window's
+ * frames, so it keeps updating while the page's tab is hidden. If that window closes first (the
+ * widget goes back to the page), the callback runs on the page's next frame instead, so a widget
+ * never waits forever on a frame that will not come.
+ * @param {Node} node @param {FrameRequestCallback} fn @returns {() => void}
+ */
+export function frameFor(node, fn) {
+  const win = node.ownerDocument?.defaultView;
+  if (!win || win === window) {
+    const id = requestAnimationFrame(fn);
+    return () => cancelAnimationFrame(id);
+  }
+  let done = false;
+  /** @param {number} t */
+  const run = (t) => { if (done) return; done = true; win.removeEventListener('pagehide', bail); fn(t); };
+  const bail = () => { win.cancelAnimationFrame(id); requestAnimationFrame(run); };
+  const id = win.requestAnimationFrame(run);
+  win.addEventListener('pagehide', bail);
+  return () => { done = true; win.cancelAnimationFrame(id); win.removeEventListener('pagehide', bail); };
+}
+
+/**
  * Listen and return a function that stops listening.
  * @param {EventTarget} target @param {string} type @param {(e: any) => void} fn @param {AddEventListenerOptions} [opts]
  */

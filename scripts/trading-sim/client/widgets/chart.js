@@ -15,7 +15,7 @@
  *   Edits to drawings and indicators are kept on an undo stack and in the widget's params, so
  *   the workspace restores them (persist()).
  */
-import { el, icon, iconButton } from '../ui/dom.js';
+import { el, icon, iconButton, frameFor } from '../ui/dom.js';
 import { dialog, toast, confirm, openMenu, field, stepper, promptText, switchField } from '../ui/feedback.js';
 import { formatPrice, formatQty, formatMoney, formatCompact, signClass, LABELS } from '../ui/format.js';
 import { createChart, CHART_TYPES, DRAWING_TOOLS, TIME_ZONES } from '../chart/adapter.js';
@@ -512,7 +512,7 @@ export function chartWidget(ctx) {
         const shown = formatPrice(symbol, p);
         const below = at.price < last;
         const anchor = el('span', { style: `position: fixed; left: ${at.x}px; top: ${at.y}px; width: 1px; height: 1px`, tabindex: '-1' });
-        ctx.root.append(anchor);
+        container.append(anchor); // in the widget, so a popped-out chart's menu opens in its window
         const done = () => setTimeout(() => anchor.remove(), 0);
         /** @param {'BUY' | 'SELL'} side @param {'LIMIT' | 'STOP'} type */
         const order = (side, type) => { done(); placeOrder(ctx, { symbol, side, type, qty: qtyValue(), duration: 'GTC', ...(type === 'LIMIT' ? { limitPrice: p } : { stopPrice: p }) }); };
@@ -523,7 +523,7 @@ export function chartWidget(ctx) {
           'separator',
           { label: 'Reset chart view', onSelect: () => { done(); chart?.resetView(); } },
         ], { label: 'Chart actions' });
-        document.addEventListener('mousedown', done, { once: true });
+        container.ownerDocument.addEventListener('mousedown', done, { once: true });
       }
 
       // ---------------------------------------------------------------- data
@@ -653,7 +653,9 @@ export function chartWidget(ctx) {
           ctx.host.on('position', (p) => { const i = positions.findIndex((x) => x.id === p.id); if (i >= 0) positions[i] = p; else positions.push(p); if (p.symbol === symbol) refreshLines(); }),
           ctx.host.on('execution', (e) => { if (e.symbol === symbol) loadMarks(); }),
           ctx.host.on('reset', () => { refreshTrading(); loadMarks(); }),
-          ctx.on('theme', () => c.setTheme()),
+          // On the next frame: a popped-out chart's window takes the theme from the page a moment
+          // later (dock.js), and the chart reads its colours from the styles there.
+          ctx.on('theme', () => { frameFor(container, () => c.setTheme()); }),
         );
         // P&L text on the position line follows the mark price.
         const plTimer = setInterval(async () => { if (positions.some((p) => p.symbol === symbol)) { positions = await ctx.broker.positions(); refreshLines(); } }, 1000);

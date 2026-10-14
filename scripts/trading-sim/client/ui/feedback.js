@@ -1,21 +1,52 @@
 /**
  * Toasts, dialogs and popover menus, built from the design language (terminal-controls.md).
  * Widgets call these instead of building their own overlays.
+ *
+ * Which window: a widget can be popped out into a window of its own (client/ui/dock.js). Overlays
+ * open in the window the user is working in: menus in their anchor's document; dialogs and
+ * toasts in the document that last had a pointer press, key press or focus (watchDocument()).
  */
 import { el, icon, iconButton, uid, clear } from './dom.js';
 
-// ------------------------------------------------------------------------------------- toasts
+// ------------------------------------------------------------------------------------ windows
 
-/** @type {HTMLElement | null} */
-let stack = null;
+/** The document the user last interacted with: the page, or a pop-out window's. (Node imports
+ *  this module in the tests, where there is no document until a page uses it.) */
+let activeDoc = globalThis.document;
+
+/**
+ * Track interaction in a document, so dialogs and toasts open there. The page's own document is
+ * watched from the start; dock.js watches each pop-out window. Capturing listeners, O(1) each.
+ * @param {Document} doc
+ */
+export function watchDocument(doc) {
+  const mark = () => { activeDoc = doc; };
+  for (const type of ['pointerdown', 'keydown', 'focusin']) doc.addEventListener(type, mark, true);
+}
+if (activeDoc) watchDocument(activeDoc);
+
+/**
+ * Where overlays go: the terminal root (they must inherit its theme) of the active window, or the
+ * page's when that window has closed.
+ * @returns {HTMLElement}
+ */
+export function overlayRoot() {
+  const win = activeDoc.defaultView;
+  const doc = win && !win.closed ? activeDoc : document;
+  return /** @type {HTMLElement} */ (doc.querySelector('.cme-terminal') ?? doc.body);
+}
+
+// ------------------------------------------------------------------------------------- toasts
 
 /**
  * Show a toast for a few seconds (errors stay until dismissed).
  * @param {{ title: string, text?: string, type?: 'success' | 'error' | 'info', timeoutMs?: number }} t
  * @param {HTMLElement} [root] the terminal root (toasts must inherit its theme)
  */
-export function toast({ title, text = '', type = 'info', timeoutMs }, root = document.querySelector('.cme-terminal') ?? document.body) {
-  if (!stack || !stack.isConnected) {
+export function toast({ title, text = '', type = 'info', timeoutMs }, root = overlayRoot()) {
+  // One stack per window, as a direct child of its terminal root.
+  let stack = /** @type {HTMLElement | null} */ (root.querySelector(':scope > .cme-toast-stack'));
+  if (!stack) {
     stack = el('div', { class: 'cme-toast-stack', role: 'status', 'aria-live': 'polite' });
     root.appendChild(stack);
   }
@@ -53,7 +84,7 @@ export function toast({ title, text = '', type = 'info', timeoutMs }, root = doc
  * @returns {Promise<string>}
  */
 export function dialog({ title, body, buttons = [{ label: 'Close', value: 'close', kind: 'outline' }], onSubmit, width }) {
-  const root = document.querySelector('.cme-terminal') ?? document.body;
+  const root = overlayRoot();
   const titleId = uid('dlg');
   const error = el('p', { class: 'cme-ticket__message', role: 'alert' });
   const footer = el('div', { class: 'cme-tdialog__footer' });
@@ -135,7 +166,10 @@ let closeOpenMenu = null;
  */
 export function openMenu(anchor, items, { align = 'left', label } = {}) {
   closeOpenMenu?.();
-  const root = anchor.closest('.cme-terminal') ?? document.body;
+  // The anchor's own window: a popped-out widget's menus open in its window.
+  const doc = anchor.ownerDocument;
+  const win = doc.defaultView ?? window;
+  const root = anchor.closest('.cme-terminal') ?? doc.body;
   const menu = el('ul', { class: 'cme-tmenu', role: 'menu', 'aria-label': label ?? anchor.getAttribute('aria-label') ?? null });
   for (const item of items) {
     if (item === 'separator') { menu.appendChild(el('li', { role: 'separator', class: 'cme-tmenu__sep' })); continue; }
@@ -151,9 +185,9 @@ export function openMenu(anchor, items, { align = 'left', label } = {}) {
   const rect = anchor.getBoundingClientRect();
   const host = /** @type {HTMLElement} */ (root).getBoundingClientRect();
   menu.style.position = 'fixed';
-  menu.style.top = `${Math.min(rect.bottom + 2, window.innerHeight - menu.offsetHeight - 4)}px`;
+  menu.style.top = `${Math.min(rect.bottom + 2, win.innerHeight - menu.offsetHeight - 4)}px`;
   const left = align === 'right' ? rect.right - menu.offsetWidth : rect.left;
-  menu.style.left = `${Math.max(host.left + 4, Math.min(left, window.innerWidth - menu.offsetWidth - 4))}px`;
+  menu.style.left = `${Math.max(host.left + 4, Math.min(left, win.innerWidth - menu.offsetWidth - 4))}px`;
   anchor.setAttribute('aria-expanded', 'true');
   const buttons = () => /** @type {HTMLButtonElement[]} */ ([...menu.querySelectorAll('.cme-tmenu__item:not(:disabled)')]);
   buttons()[0]?.focus();
@@ -163,7 +197,7 @@ export function openMenu(anchor, items, { align = 'left', label } = {}) {
   /** @param {KeyboardEvent} e */
   const keys = (e) => {
     const list = buttons();
-    const i = list.indexOf(/** @type {HTMLButtonElement} */ (document.activeElement));
+    const i = list.indexOf(/** @type {HTMLButtonElement} */ (doc.activeElement));
     if (e.key === 'ArrowDown') { e.preventDefault(); list[(i + 1) % list.length]?.focus(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); list[(i - 1 + list.length) % list.length]?.focus(); }
     else if (e.key === 'Escape') { e.preventDefault(); close(); anchor.focus(); }
@@ -172,11 +206,11 @@ export function openMenu(anchor, items, { align = 'left', label } = {}) {
   function close() {
     menu.remove();
     anchor.setAttribute('aria-expanded', 'false');
-    document.removeEventListener('mousedown', outside, true);
+    doc.removeEventListener('mousedown', outside, true);
     menu.removeEventListener('keydown', keys);
     if (closeOpenMenu === close) closeOpenMenu = null;
   }
-  setTimeout(() => document.addEventListener('mousedown', outside, true), 0);
+  setTimeout(() => doc.addEventListener('mousedown', outside, true), 0);
   menu.addEventListener('keydown', keys);
   closeOpenMenu = close;
   return close;

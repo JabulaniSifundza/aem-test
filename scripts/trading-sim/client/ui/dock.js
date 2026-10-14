@@ -24,6 +24,7 @@
  * the shell saves it (debounced) as the workspace.
  */
 import { el, icon, iconButton, clear, uid } from './dom.js';
+import { toast, watchDocument } from './feedback.js';
 
 /**
  * @typedef {{ type: 'split', dir: 'row' | 'column', sizes: number[], children: DockNode[] }} SplitNode
@@ -65,6 +66,11 @@ const TAB_STRIP = 34;
 /** A new floating panel, as in the simulator. */
 const FLOAT = { w: 600, h: 400, x: 110, y: 80, dx: 60, dy: 30, minW: 240, minH: 160 };
 const GRIPS = /** @type {const} */ (['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se']);
+/** The blank same-origin page a popped-out widget opens in (no script; popOut fills it). */
+const POPOUT_PAGE = new URL('./popout.html', import.meta.url).href;
+/** How long to wait for that page to load before giving up, and then for its stylesheets. */
+const POPOUT_LOAD_MS = 10_000;
+const STYLES_LOAD_MS = 3_000;
 
 /**
  * @param {{ root: HTMLElement, defs: Map<string, WidgetDef>, onChange: (state: DockState) => void, emptyText?: string }} options
@@ -200,7 +206,12 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
     /** @type {WidgetApi} */
     const api = {
       id,
-      setTitle(title) { entry.title = title; const t = root.querySelector(`[data-tab="${id}"] .cme-panel__tab-label`); if (t) t.textContent = title; },
+      setTitle(title) {
+        entry.title = title;
+        const t = root.querySelector(`[data-tab="${id}"] .cme-panel__tab-label`);
+        if (t) t.textContent = title;
+        if (entry.popup && !entry.popup.closed && entry.popup.document.URL !== 'about:blank') entry.popup.document.title = title;
+      },
       setParams(params) { state.widgets[id] = { ...state.widgets[id], params: { ...state.widgets[id].params, ...params } }; emit(); },
       close() { closeWidget(id); },
     };
@@ -554,38 +565,137 @@ export function createDock({ root, defs, onChange, emptyText = 'Add widgets from
 
   // ------------------------------------------------------------------ pop-out
 
-  /** Move a widget into its own browser window; closing the window brings it back. @param {string} id */
+  /**
+   * Move a widget into a browser window of its own ("Open in a new window"). The widget is not
+   * rebuilt: its element moves to the other window and back, so a chart keeps its state.
+   *
+   * 1. Open client/ui/popout.html, a blank same-origin page with no script. (Not about:blank: that
+   *    has no doctype, so it renders in quirks mode, and its origin can differ from the page's.)
+   *    The docked panel shows "Open in another window" with Bring it back.
+   * 2. Once it has loaded (polled: the window's own load event can fire before a listener added
+   *    from here is in place), give it the page's look: every stylesheet, recreated by its own
+   *    document so it loads there; the body's classes (EDS shows the body only with "appear");
+   *    <html data-cme-theme>; and a wrapper with the terminal root's classes (cme-terminal, and
+   *    cme-inverse when dark) and data-theme, kept in step with the page while the window is open.
+   * 3. Bind the design language's behaviours (steppers, segmented controls, switches, menus) to
+   *    its document, and tell feedback.js to open dialogs and toasts there while it is in use.
+   * 4. Move the widget in, once the stylesheets have loaded (at most STYLES_LOAD_MS).
+   * 5. Bring the widget back when the window closes or reloads (pagehide, with a poll as a
+   *    fallback), when its panel's Bring it back is pressed, or when this page unloads.
+   * Widgets draw on the frames of the window that shows them (dom.js frameFor), so a popped-out
+   * chart keeps updating while the page's tab is hidden.
+   * @param {string} id
+   */
   function popOut(id) {
-    const w = live.get(id);
-    if (!w || w.popup) return;
-    const popup = window.open('', `ts-${id}`, 'width=900,height=640');
-    if (!popup) return;
-    const doc = popup.document;
-    doc.title = w.title;
-    for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
-      doc.head.appendChild(el('link', { rel: 'stylesheet', href: /** @type {HTMLLinkElement} */ (link).href }));
+    const found = live.get(id);
+    if (!found || found.popup) return;
+    const w = found;
+    const popup = window.open(POPOUT_PAGE, `ts-${id}`, 'popup,width=900,height=640');
+    if (!popup) {
+      toast({ title: 'The window did not open', text: 'Allow pop-ups for this site to open a widget in a new window.', type: 'error' });
+      return;
     }
-    const term = /** @type {HTMLElement} */ (root.closest('.cme-terminal') ?? document.querySelector('.cme-terminal'));
-    const shell = doc.createElement('div');
-    shell.className = term.className;
-    shell.dataset.theme = term.dataset.theme ?? 'light';
-    shell.style.height = '100vh';
-    doc.body.style.margin = '0';
-    doc.body.appendChild(shell);
-    w.host.hidden = false;
-    shell.appendChild(w.host);
     w.popup = popup;
     render();
+
+    let mounted = false;
+    let returned = false;
+    /** @type {Array<() => void>} */
+    const cleanups = [];
     const back = () => {
-      if (!w.popup) return;
+      if (returned) return;
+      returned = true;
+      for (const stop of cleanups) stop();
+      if (!popup.closed) popup.close();
+      if (live.get(id) !== w) return; // the widget was closed meanwhile
       w.popup = null;
       render();
-      emit();
     };
-    popup.addEventListener('pagehide', back);
-    const timer = setInterval(() => { if (popup.closed) { clearInterval(timer); back(); } }, 500);
-    popup.addEventListener('resize', () => w.instance.resize?.());
-    setTimeout(() => w.instance.resize?.(), 100);
+    const started = Date.now();
+    const poll = setInterval(() => {
+      if (popup.closed) { back(); return; }
+      if (mounted) return;
+      const doc = popup.document;
+      if (doc.readyState === 'complete' && doc.URL !== 'about:blank') { mounted = true; mount(doc); }
+      else if (Date.now() - started > POPOUT_LOAD_MS) back();
+    }, 250);
+    cleanups.push(() => clearInterval(poll));
+    const unload = () => back();
+    window.addEventListener('pagehide', unload);
+    cleanups.push(() => window.removeEventListener('pagehide', unload));
+
+    /** @param {Document} doc */
+    async function mount(doc) {
+      const win = /** @type {Window} */ (doc.defaultView);
+      doc.title = w.title;
+      doc.documentElement.lang = document.documentElement.lang || 'en';
+      doc.body.className = document.body.className;
+      doc.body.style.margin = '0';
+      const term = /** @type {HTMLElement | null} */ (root.closest('.cme-terminal') ?? document.querySelector('.cme-terminal'));
+      const shell = doc.createElement('div');
+      shell.style.cssText = 'height: 100vh; display: flex; flex-direction: column;';
+      const syncTheme = () => {
+        const page = document.documentElement.dataset.cmeTheme;
+        if (page) doc.documentElement.dataset.cmeTheme = page;
+        else delete doc.documentElement.dataset.cmeTheme;
+        shell.className = `${term?.className ?? 'cme-terminal'} ts-popout`;
+        shell.dataset.theme = term?.dataset.theme ?? 'light';
+      };
+      syncTheme();
+      const themes = new MutationObserver(syncTheme);
+      themes.observe(document.documentElement, { attributes: true, attributeFilter: ['data-cme-theme'] });
+      if (term) themes.observe(term, { attributes: true, attributeFilter: ['data-theme', 'class'] });
+      cleanups.push(() => themes.disconnect());
+
+      await Promise.race([Promise.all(copyStyles(doc)), new Promise((r) => { setTimeout(r, STYLES_LOAD_MS); })]);
+      if (returned) return;
+      window.cmeTerminal?.bind(doc);
+      watchDocument(doc);
+      doc.body.replaceChildren(shell);
+      w.host.hidden = false;
+      w.host.style.flex = '1';
+      w.host.style.minHeight = '0';
+      shell.appendChild(w.host);
+      cleanups.push(() => { w.host.style.flex = ''; w.host.style.minHeight = ''; });
+      win.addEventListener('pagehide', back);
+      win.addEventListener('resize', () => w.instance.resize?.());
+      w.instance.show?.();
+      w.instance.resize?.();
+      win.focus();
+    }
+  }
+
+  /**
+   * Give another document the page's stylesheets: each <link rel="stylesheet"> again (absolute
+   * URL, same media), each <style> as text, and constructed (adopted) sheets as text, since a
+   * constructed sheet belongs to one document. Elements are created by `doc` itself so they load
+   * there. Resolves each link on load or error. O(stylesheets).
+   * @param {Document} doc @returns {Promise<void>[]}
+   */
+  function copyStyles(doc) {
+    /** @type {Promise<void>[]} */
+    const loads = [];
+    for (const node of document.querySelectorAll('link[rel~="stylesheet"], style')) {
+      if (node instanceof HTMLLinkElement) {
+        if (!node.href) continue;
+        const link = doc.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = node.href;
+        if (node.media) link.media = node.media;
+        loads.push(new Promise((resolve) => { link.onload = () => resolve(); link.onerror = () => resolve(); }));
+        doc.head.appendChild(link);
+      } else {
+        const style = doc.createElement('style');
+        style.textContent = node.textContent;
+        doc.head.appendChild(style);
+      }
+    }
+    for (const sheet of document.adoptedStyleSheets) {
+      const style = doc.createElement('style');
+      style.textContent = Array.from(sheet.cssRules, (r) => r.cssText).join('\n');
+      doc.head.appendChild(style);
+    }
+    return loads;
   }
 
   // ------------------------------------------------------------------ public
